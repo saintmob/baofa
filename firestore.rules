@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSyncState(data) {
+      return data.keys().hasAll(['intensity', 'evolution', 'mode']) &&
+             data.intensity is number &&
+             data.evolution is number &&
+             data.mode is string &&
+             data.mode.size() <= 64 &&
+             (!('lastInteraction' in data) || (
+               data.lastInteraction.x is number &&
+               data.lastInteraction.y is number &&
+               data.lastInteraction.z is number &&
+               data.lastInteraction.timestamp is number
+             )) &&
+             (!('activeNodes' in data) || data.activeNodes is list);
+    }
+
+    match /global/state {
+      // For this app, anyone can read/write the state to facilitate social sync
+      // We still validate the schema strictly to prevent poisoning
+      allow read: if true;
+      allow write: if isValidSyncState(request.resource.data);
+    }
+  }
+}
