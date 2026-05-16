@@ -15,6 +15,13 @@ const app = initializeApp(firebaseConfig);
 // @ts-ignore
 export const db = getFirestore(app, import.meta.env.VITE_FIREBASE_DATABASE_ID);
 export const auth = getAuth();
+export const isFirebaseEnabled =
+  Boolean(firebaseConfig.apiKey) &&
+  Boolean(firebaseConfig.projectId) &&
+  Boolean(firebaseConfig.firestoreDatabaseId) &&
+  !String(firebaseConfig.apiKey).startsWith('YOUR_') &&
+  !String(firebaseConfig.projectId).startsWith('YOUR_') &&
+  !String(firebaseConfig.firestoreDatabaseId).startsWith('YOUR_');
 
 // Test connection
 async function testConnection() {

@@ -9,6 +9,8 @@ interface ParticleSceneProps {
   intensity: number;
   isStarted?: boolean;
   isPaused?: boolean;
+  sourcePositions?: THREE.Vector3[];
+  isExploding?: boolean;
 }
 
 export const ParticleScene: React.FC<ParticleSceneProps> = ({ audioData, interactionPoint, mode, intensity, isStarted, isPaused }) => {
