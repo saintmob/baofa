@@ -1,0 +1,43 @@
+{
+  "imageSources": [
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/1.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/17.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/18.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/2.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/3.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/4.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/5.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/6.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/7.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/8.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/9.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/10.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/11.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/19.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/13.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/14.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/15.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/16.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/20.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/21.PNG",
+    "https://raw.githubusercontent.com/chenmanqi750-creator/myglb/main/22.PNG"
+  ],
+  "imageOpacities": {
+    "0": 0.83
+  },
+  "useBlendScreens": {
+    "0": true
+  },
+  "imageScales": {
+    "0": 1
+  },
+  "filterIntensities": {
+    "0": 0.89
+  },
+  "wobbleAmplitudes": {
+    "0": 0
+  },
+  "wobbleFrequencies": {
+    "0": 1
+  }
+}
