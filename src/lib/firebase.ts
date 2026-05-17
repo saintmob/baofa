@@ -15,8 +15,6 @@ type FirebaseEnvConfig = {
 
 function readFirebaseConfig(): FirebaseEnvConfig {
   const env = import.meta.env;
-  const firestoreDatabaseId =
-    env.VITE_FIREBASE_DATABASE_ID ?? env.VITE_FIREBASE_FIRESTORE_DATABASE_ID ?? '';
 
   return {
     apiKey: env.VITE_FIREBASE_API_KEY ?? '',
@@ -26,7 +24,7 @@ function readFirebaseConfig(): FirebaseEnvConfig {
     messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '',
     appId: env.VITE_FIREBASE_APP_ID ?? '',
     measurementId: env.VITE_FIREBASE_MEASUREMENT_ID ?? '',
-    firestoreDatabaseId,
+    firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID ?? '',
   };
 }
 
