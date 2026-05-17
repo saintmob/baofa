@@ -1,23 +1,63 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, type Auth } from 'firebase/auth';
+import { doc, getDocFromServer, getFirestore, type Firestore } from 'firebase/firestore';
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+type FirebaseEnvConfig = {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  measurementId: string;
+  firestoreDatabaseId: string;
 };
 
-const app = initializeApp(firebaseConfig);
-// @ts-ignore
-export const db = getFirestore(app, import.meta.env.VITE_FIREBASE_DATABASE_ID);
-export const auth = getAuth();
+function readFirebaseConfig(): FirebaseEnvConfig {
+  const env = import.meta.env;
+
+  return {
+    apiKey: env.VITE_FIREBASE_API_KEY ?? '',
+    authDomain: env.VITE_FIREBASE_AUTH_DOMAIN ?? '',
+    projectId: env.VITE_FIREBASE_PROJECT_ID ?? '',
+    storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET ?? '',
+    messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '',
+    appId: env.VITE_FIREBASE_APP_ID ?? '',
+    measurementId: env.VITE_FIREBASE_MEASUREMENT_ID ?? '',
+    firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID ?? '',
+  };
+}
+
+const firebaseConfig = readFirebaseConfig();
+
+const hasRequiredFirebaseConfig =
+  Boolean(firebaseConfig.apiKey) &&
+  Boolean(firebaseConfig.projectId) &&
+  Boolean(firebaseConfig.firestoreDatabaseId);
+
+export const isFirebaseEnabled =
+  hasRequiredFirebaseConfig &&
+  !String(firebaseConfig.apiKey).startsWith('YOUR_') &&
+  !String(firebaseConfig.projectId).startsWith('YOUR_') &&
+  !String(firebaseConfig.firestoreDatabaseId).startsWith('YOUR_');
+
+let app: FirebaseApp | null = null;
+
+export let db: Firestore | null = null;
+export let auth: Auth | null = null;
+
+if (isFirebaseEnabled) {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  auth = getAuth(app);
+}
 
 // Test connection
 async function testConnection() {
+  if (!isFirebaseEnabled || !db) {
+    return;
+  }
+
   try {
     const testDoc = doc(db, 'global', 'state');
     await getDocFromServer(testDoc);
@@ -29,7 +69,8 @@ async function testConnection() {
     }
   }
 }
-testConnection();
+
+void testConnection();
 
 export enum OperationType {
   CREATE = 'create',
@@ -61,12 +102,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
+      tenantId: auth?.currentUser?.tenantId,
+      providerInfo: auth?.currentUser?.providerData?.map(provider => ({
         providerId: provider.providerId,
         email: provider.email,
       })) || []
