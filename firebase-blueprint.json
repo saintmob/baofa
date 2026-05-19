@@ -1,0 +1,30 @@
+{
+  "entities": {
+    "SyncState": {
+      "title": "SyncState",
+      "description": "Global synchronization state for the particle system",
+      "type": "object",
+      "properties": {
+        "intensity": { "type": "number", "description": "Current system intensity" },
+        "evolution": { "type": "number", "description": "Global evolution progress" },
+        "mode": { "type": "string", "description": "Current mode" },
+        "lastInteraction": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "z": { "type": "number" },
+            "timestamp": { "type": "number" }
+          }
+        },
+        "activeNodes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "firestore": {
+    "/global/state": {
+      "schema": "SyncState",
+      "description": "The single source of truth for all synchronized instances"
+    }
+  }
+}

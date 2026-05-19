@@ -1,0 +1,10 @@
+{
+  "name": "World Core Sync",
+  "description": "Collaborative emotional processing interface with real-time particle synchronization.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
