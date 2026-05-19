@@ -10,51 +10,70 @@ import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, RotateCcw } from 'lucide-react';
-
-const SCREEN_ROWS = [
-  ['A1', 'B1', 'C1', 'D1', 'E1', 'F1'],
-  ['', 'B2', 'C2', 'D2', 'E2', ''],
-  ['', '', 'C3', 'D3', '', ''],
-  ['', '', 'C4', 'D4', '', ''],
-  ['', '', 'C5', 'D5', '', ''],
-];
-
-const MASTER_SCREEN = { id: 'MASTER', label: 'Master / 主屏', col: 2.5, row: -1 };
-
-const SCREEN_COORDS = SCREEN_ROWS.reduce<Record<string, { col: number; row: number }>>((coords, row, rowIndex) => {
-  row.forEach((id, colIndex) => {
-    if (id) coords[id] = { col: colIndex, row: rowIndex };
-  });
-  return coords;
-}, { MASTER: { col: MASTER_SCREEN.col, row: MASTER_SCREEN.row } });
+import {
+  DEFAULT_SCREEN_ID,
+  MASTER_SCREEN,
+  SCREEN_LAYOUT_ITEMS,
+  STAGE_BOUNDS,
+  getNearestScreenId,
+  getScreenWorldPointData,
+  isKnownScreenId,
+  type ScreenLayoutItem,
+} from './screenLayout';
 
 function getScreenWorldPoint(id: string) {
-  const screen = SCREEN_COORDS[id] ?? SCREEN_COORDS.C5;
-  return new THREE.Vector3((screen.col - 2.5) * 12, (2 - screen.row) * 7, 0);
+  const point = getScreenWorldPointData(id);
+  return new THREE.Vector3(point.x, point.y, point.z);
+}
+
+function getStageRect(rect: DOMRect) {
+  const aspect = STAGE_BOUNDS.width / STAGE_BOUNDS.height;
+  const maxWidth = rect.width * 0.94;
+  const maxHeight = rect.height * 0.82;
+  const width = Math.min(maxWidth, maxHeight * aspect);
+  const height = width / aspect;
+
+  return {
+    left: rect.left + (rect.width - width) / 2,
+    top: rect.top + (rect.height - height) / 2 + 18,
+    width,
+    height,
+  };
 }
 
 function getScreenFromPointer(clientX: number, clientY: number, rect: DOMRect, fallback: string) {
-  const side = Math.min(rect.width * 0.94, rect.height * 1.12);
-  const gridWidth = side;
-  const gridHeight = side * 5 / 6;
-  const left = rect.left + (rect.width - gridWidth) / 2;
-  const top = rect.top + (rect.height - gridHeight) / 2 + 54;
-  const masterWidth = gridWidth / 6;
-  const masterHeight = gridHeight / 5;
-  const masterLeft = left + gridWidth / 2 - masterWidth / 2;
-  const masterTop = top - masterHeight - 12;
+  const stage = getStageRect(rect);
   if (
-    clientX >= masterLeft &&
-    clientX <= masterLeft + masterWidth &&
-    clientY >= masterTop &&
-    clientY <= masterTop + masterHeight
+    clientX < stage.left ||
+    clientX > stage.left + stage.width ||
+    clientY < stage.top ||
+    clientY > stage.top + stage.height
   ) {
-    return 'MASTER';
+    return fallback;
   }
-  const col = Math.floor(((clientX - left) / gridWidth) * 6);
-  const row = Math.floor(((clientY - top) / gridHeight) * 5);
-  const id = SCREEN_ROWS[row]?.[col];
-  return id || fallback;
+
+  const col = ((clientX - stage.left) / stage.width) * STAGE_BOUNDS.width;
+  const row = ((clientY - stage.top) / stage.height) * STAGE_BOUNDS.height;
+
+  return getNearestScreenId(col, row, fallback);
+}
+
+function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
+  const width = screen.width ?? 0.78;
+  const height = screen.height ?? 0.52;
+
+  return {
+    left: `${(screen.col / STAGE_BOUNDS.width) * 100}%`,
+    top: `${(screen.row / STAGE_BOUNDS.height) * 100}%`,
+    width: `${(width / STAGE_BOUNDS.width) * 100}%`,
+    height: `${(height / STAGE_BOUNDS.height) * 100}%`,
+    transform: `translate(-50%, -50%) rotate(${screen.rotate ?? 0}deg)`,
+  };
+}
+
+function getInitialScreenId() {
+  const saved = localStorage.getItem('baofa-screen-id');
+  return isKnownScreenId(saved) ? saved! : DEFAULT_SCREEN_ID;
 }
 
 type WebGLStats = {
@@ -127,7 +146,7 @@ export default function App() {
   const [interactionPoint, setInteractionPoint] = useState<THREE.Vector3 | null>(null);
   const [mode, setMode] = useState<'idle' | 'interaction' | 'flow' | 'climax'>('idle');
   const [intensity, setIntensity] = useState(0.08);
-  const [screenId, setScreenId] = useState(() => localStorage.getItem('baofa-screen-id') || 'C5');
+  const [screenId, setScreenId] = useState(getInitialScreenId);
   const [isMaster, setIsMaster] = useState(() => localStorage.getItem('baofa-role') === 'master');
   const [isOverview, setIsOverview] = useState(() => localStorage.getItem('baofa-view') === 'overview');
   const [showScreenPanel, setShowScreenPanel] = useState(true);
@@ -189,7 +208,8 @@ export default function App() {
         triggerNote('C3');
       }
       if (data.screenPulse && typeof data.screenPulse.timestamp === 'number') {
-        setScreenPulse({ source: data.screenPulse.source || 'C5', timestamp: data.screenPulse.timestamp });
+        const source = isKnownScreenId(data.screenPulse.source) ? data.screenPulse.source : DEFAULT_SCREEN_ID;
+        setScreenPulse({ source, timestamp: data.screenPulse.timestamp });
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'global/state');
@@ -209,10 +229,12 @@ export default function App() {
 
   const startGestureGrowth = useCallback(() => {
     treeTriggeredRef.current = true;
+    treeGrowthRef.current = Math.max(treeGrowthRef.current, 0.08);
     setTreeTriggered(true);
+    setTreeGrowth(treeGrowthRef.current);
     setGestureActive(true);
     setMode('flow');
-    intensityRef.current = Math.max(intensityRef.current, 0.55);
+    intensityRef.current = Math.max(intensityRef.current, 0.72);
     syncToFirebase({
       treeGrowth: treeGrowthRef.current,
       gestureActive: true,
@@ -225,13 +247,13 @@ export default function App() {
   const animate = useCallback(() => {
     setAudioData(getAudioData());
 
-    const handGestureActive = isCameraActive && hasHandDetected && openHandCount > 0;
+    const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
     if (handGestureActive && !treeTriggeredRef.current) {
       startGestureGrowth();
     }
 
     if (treeTriggeredRef.current) {
-      const speed = 0.006 + (handGestureActive ? openHandCount * 0.004 : 0.002);
+      const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
       treeGrowthRef.current = Math.min(1, treeGrowthRef.current + speed);
       setTreeGrowth(treeGrowthRef.current);
     }
@@ -242,7 +264,7 @@ export default function App() {
     setIntensity(intensityRef.current);
 
     requestRef.current = requestAnimationFrame(animate);
-  }, [getAudioData, hasHandDetected, isCameraActive, openHandCount, startGestureGrowth]);
+  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, startGestureGrowth]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
@@ -289,6 +311,7 @@ export default function App() {
   };
 
   const handleScreenChange = (id: string) => {
+    if (!isKnownScreenId(id)) return;
     setScreenId(id);
     setIsMaster(id === 'MASTER');
     setIsOverview(false);
@@ -384,23 +407,26 @@ export default function App() {
 
       {isOverview && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-          <div className="relative w-[min(94vw,112vh)]">
-            <div className="relative mx-auto mb-3 w-[calc(100%/6)] aspect-[1.6] border border-emerald-300/35 bg-emerald-300/[0.035] text-[9px] font-mono tracking-widest text-emerald-100/80">
+          <div
+            className="relative w-[min(94vw,118vh)] border border-cyan-300/20 bg-black/10"
+            style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
+          >
+            <div
+              className="absolute rounded-sm border border-emerald-300/35 bg-emerald-300/[0.035] text-[9px] font-mono tracking-widest text-emerald-100/80"
+              style={getLayoutStyle(MASTER_SCREEN)}
+            >
               <span className="absolute left-2 top-2">MASTER</span>
-              <span className="absolute bottom-2 right-2">主屏</span>
+              <span className="absolute bottom-2 right-2">大屏幕</span>
             </div>
-            <div className="grid grid-cols-6 grid-rows-5 aspect-[6/5] border border-cyan-300/20 bg-black/10">
-              {SCREEN_ROWS.map((row) =>
-                row.map((id, index) => (
-                  <div
-                    key={`overview-${row.join('-')}-${index}`}
-                    className={`relative border border-cyan-300/15 ${id ? 'bg-cyan-300/[0.025]' : 'bg-black/45'}`}
-                  >
-                    {id && <span className="absolute left-2 top-2 text-[9px] font-mono tracking-widest text-cyan-100/65">{id}</span>}
-                  </div>
-                ))
-              )}
-            </div>
+            {SCREEN_LAYOUT_ITEMS.map((screen) => (
+              <div
+                key={`overview-${screen.id}`}
+                className="absolute rounded-sm border border-cyan-300/20 bg-cyan-300/[0.025]"
+                style={getLayoutStyle(screen)}
+              >
+                <span className="absolute left-1.5 top-1 text-[9px] font-mono tracking-widest text-cyan-100/65">{screen.id}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -487,7 +513,7 @@ export default function App() {
                     onClick={() => {
                       const next = !isMaster;
                       setIsMaster(next);
-                      if (next) setScreenId('MASTER');
+                      setScreenId(next ? 'MASTER' : DEFAULT_SCREEN_ID);
                       setIsOverview(false);
                     }}
                     className={`h-9 px-3 rounded border text-[10px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200' : 'border-white/10 bg-white/5 text-white/45'}`}
@@ -497,29 +523,27 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-4 flex justify-center">
+              <div
+                className="relative mt-4 rounded border border-white/10 bg-white/[0.025]"
+                style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
+              >
                 <button
                   onClick={() => handleScreenChange('MASTER')}
-                  className={`w-28 rounded border px-3 py-2 text-[10px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
+                  className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
+                  style={getLayoutStyle(MASTER_SCREEN)}
                 >
-                  Master / 主屏
+                  大屏幕
                 </button>
-              </div>
-
-              <div className="mt-3 grid grid-cols-6 gap-1.5">
-                {SCREEN_ROWS.map((row) =>
-                  row.map((id, index) => id ? (
-                    <button
-                      key={id}
-                      onClick={() => handleScreenChange(id)}
-                      className={`aspect-[1.6] rounded border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
-                    >
-                      {id}
-                    </button>
-                  ) : (
-                    <div key={`empty-${row.join('-')}-${index}`} />
-                  ))
-                )}
+                {SCREEN_LAYOUT_ITEMS.map((screen) => (
+                  <button
+                    key={screen.id}
+                    onClick={() => handleScreenChange(screen.id)}
+                    className={`absolute rounded-sm border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === screen.id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
+                    style={getLayoutStyle(screen)}
+                  >
+                    {screen.id}
+                  </button>
+                ))}
               </div>
 
               <div className="mt-4 flex justify-end">

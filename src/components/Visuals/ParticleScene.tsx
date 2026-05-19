@@ -1,6 +1,12 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  DEFAULT_SCREEN_ID,
+  SCREEN_LAYOUT,
+  getScreenWorldPointData,
+  layoutToWorldPoint,
+} from '../../screenLayout';
 
 interface ParticleSceneProps {
   audioData: Float32Array;
@@ -16,36 +22,12 @@ interface ParticleSceneProps {
   isPaused?: boolean;
 }
 
-const SCREEN_LAYOUT: Record<string, { col: number; row: number }> = {
-  MASTER: { col: 2.5, row: -1 },
-  A1: { col: 0, row: 0 },
-  B1: { col: 1, row: 0 },
-  C1: { col: 2, row: 0 },
-  D1: { col: 3, row: 0 },
-  E1: { col: 4, row: 0 },
-  F1: { col: 5, row: 0 },
-  B2: { col: 1, row: 1 },
-  C2: { col: 2, row: 1 },
-  D2: { col: 3, row: 1 },
-  E2: { col: 4, row: 1 },
-  C3: { col: 2, row: 2 },
-  D3: { col: 3, row: 2 },
-  C4: { col: 2, row: 3 },
-  D4: { col: 3, row: 3 },
-  C5: { col: 2, row: 4 },
-  D5: { col: 3, row: 4 },
-};
-
-function getScreenCenter(screenId = 'C5') {
+function getScreenCenter(screenId = DEFAULT_SCREEN_ID) {
   if (screenId === 'OVERVIEW') {
     return { x: 0, y: 0 };
   }
 
-  const layout = SCREEN_LAYOUT[screenId] ?? SCREEN_LAYOUT.C5;
-  return {
-    x: (layout.col - 2.5) * 12,
-    y: (2 - layout.row) * 7,
-  };
+  return getScreenWorldPointData(screenId);
 }
 
 function createGlyphTexture() {
@@ -79,7 +61,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   interactionPoint,
   mode,
   intensity,
-  screenId = 'C5',
+  screenId = DEFAULT_SCREEN_ID,
   treeGrowth = 0,
   gestureActive = false,
   pulseSource,
@@ -126,11 +108,14 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     ? [-screenCenter.x, -screenCenter.y, 0]
     : [-screenCenter.x * sceneScale.x, -screenCenter.y * sceneScale.y, 0];
   const glyphTexture = useMemo(() => createGlyphTexture(), []);
-  const screenCenters = useMemo(() => Object.entries(SCREEN_LAYOUT).map(([id, layout]) => ({
-    id,
-    layout,
-    point: new THREE.Vector3((layout.col - 2.5) * 12, (2 - layout.row) * 7, 0),
-  })), []);
+  const screenCenters = useMemo(() => Object.entries(SCREEN_LAYOUT).map(([id, layout]) => {
+    const point = layoutToWorldPoint(layout);
+    return {
+      id,
+      layout,
+      point: new THREE.Vector3(point.x, point.y, point.z),
+    };
+  }), []);
 
   const [positions, initialPositions, growthOrder] = useMemo(() => {
     const pos = new Float32Array(count * 3);
@@ -206,16 +191,25 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       const gridY = Math.floor(localIndex / gridCols) % gridRows;
       const offsetX = ((gridX + Math.random()) / gridCols - 0.5) * 11.2;
       const offsetY = ((gridY + Math.random()) / gridRows - 0.5) * 6.8;
-      pos[i * 3] = (screen.col - 2.5) * 12 + offsetX;
-      pos[i * 3 + 1] = (2 - screen.row) * 7 + offsetY;
+      const point = layoutToWorldPoint(screen);
+      pos[i * 3] = point.x + offsetX;
+      pos[i * 3 + 1] = point.y + offsetY;
       pos[i * 3 + 2] = (Math.random() - 0.5) * 14;
     }
     return pos;
   }, [mistCount]);
 
   const squareData = useMemo(() => {
-    const squares: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: number; screen: { col: number; row: number } }> = [];
-    const squaresPerScreen = 112;
+    const squares: Array<{
+      position: THREE.Vector3;
+      rotation: THREE.Euler;
+      scale: number;
+      drift: THREE.Vector3;
+      phase: number;
+      speed: number;
+      screen: { col: number; row: number };
+    }> = [];
+    const squaresPerScreen = 72;
     const squareCols = 14;
     const squareRows = Math.ceil(squaresPerScreen / squareCols);
     Object.values(SCREEN_LAYOUT).forEach((screen) => {
@@ -224,14 +218,22 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         const gridY = Math.floor(i / squareCols) % squareRows;
         const offsetX = ((gridX + 0.2 + Math.random() * 0.6) / squareCols - 0.5) * 10.4;
         const offsetY = ((gridY + 0.2 + Math.random() * 0.6) / squareRows - 0.5) * 6.4;
+        const point = layoutToWorldPoint(screen);
         squares.push({
           position: new THREE.Vector3(
-            (screen.col - 2.5) * 12 + offsetX,
-            (2 - screen.row) * 7 + offsetY,
+            point.x + offsetX,
+            point.y + offsetY,
             (Math.random() - 0.5) * 6
           ),
           rotation: new THREE.Euler(0, 0, Math.random() * Math.PI),
           scale: 0.055 + Math.random() * 0.04,
+          drift: new THREE.Vector3(
+            0.18 + Math.random() * 0.42,
+            0.14 + Math.random() * 0.36,
+            0.12 + Math.random() * 0.3
+          ),
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.65 + Math.random() * 1.15,
           screen,
         });
       }
@@ -696,15 +698,19 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           pulse = Math.sin(delayed * Math.PI) * 0.9;
         }
 
+        const freePower = 0.75 + intensity * 1.4 + pulse * 1.15;
+        const sway = Math.sin(time * data.speed + data.phase);
+        const lift = Math.cos(time * (data.speed * 0.82) + data.phase * 1.37);
+        const float = Math.sin(time * (data.speed * 0.56) + data.phase * 0.71);
         squareMatrixObject.position.set(
-          data.position.x + Math.sin(time * 0.7 + i * 1.37) * 0.04,
-          data.position.y + Math.cos(time * 0.6 + i * 1.91) * 0.035,
-          data.position.z + Math.sin(time * 0.8 + i * 0.73) * 0.04
+          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55,
+          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42,
+          data.position.z + float * data.drift.z * freePower
         );
         squareMatrixObject.rotation.set(
           0,
           0,
-          data.rotation.z + time * (0.28 + pulse * 0.45) + Math.cos(time * 0.9 + i) * 0.08
+          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1) + Math.cos(time * 1.2 + i) * 0.18
         );
         squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + pulse * 1.25));
         squareMatrixObject.updateMatrix();

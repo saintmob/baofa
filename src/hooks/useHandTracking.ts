@@ -1,8 +1,52 @@
 import { useEffect, useRef, useState } from 'react';
 import { Hands, Results } from '@mediapipe/hands';
 
+type HandLandmark = {
+  x: number;
+  y: number;
+  z?: number;
+};
+
+const OPEN_CONFIDENCE_ON = 2;
+const OPEN_CONFIDENCE_MAX = 5;
+
+function distance2D(a: HandLandmark, b: HandLandmark) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function isPalmOpen(landmarks: HandLandmark[]) {
+  const palmHeight = Math.max(0.001, distance2D(landmarks[0], landmarks[9]));
+  const palmWidth = Math.max(0.001, distance2D(landmarks[5], landmarks[17]));
+  const fingers = [
+    { tip: 8, pip: 6, mcp: 5 },
+    { tip: 12, pip: 10, mcp: 9 },
+    { tip: 16, pip: 14, mcp: 13 },
+    { tip: 20, pip: 18, mcp: 17 },
+  ];
+
+  let openFingers = 0;
+  fingers.forEach(({ tip, pip, mcp }) => {
+    const liftedFromPip = landmarks[tip].y < landmarks[pip].y + palmHeight * 0.1;
+    const liftedFromMcp = landmarks[tip].y < landmarks[mcp].y - palmHeight * 0.035;
+    const extendedLength = distance2D(landmarks[tip], landmarks[mcp]) > palmHeight * 0.34;
+
+    if ((liftedFromPip || liftedFromMcp) && extendedLength) {
+      openFingers++;
+    }
+  });
+
+  const thumbOpen =
+    distance2D(landmarks[4], landmarks[9]) > palmWidth * 0.95 ||
+    distance2D(landmarks[4], landmarks[5]) > palmWidth * 0.62;
+  const spreadOpen =
+    distance2D(landmarks[8], landmarks[20]) > palmWidth * 1.05 ||
+    distance2D(landmarks[8], landmarks[16]) > palmWidth * 0.72;
+
+  return openFingers >= 2 || (openFingers >= 1 && thumbOpen && spreadOpen);
+}
+
 export function useHandTracking() {
-  const [isHandOpen, setIsHandOpen] = useState(true);
+  const [isHandOpen, setIsHandOpen] = useState(false);
   const [openHandCount, setOpenHandCount] = useState(0);
   const [hasHandDetected, setHasHandDetected] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -13,6 +57,9 @@ export function useHandTracking() {
   const frameRef = useRef<number | null>(null);
 
   const isCameraActiveRef = useRef(false);
+  const presenceConfidenceRef = useRef(0);
+  const openConfidenceRef = useRef(0);
+  const lastOpenHandCountRef = useRef(0);
 
   useEffect(() => {
     // Create hidden video element
@@ -41,8 +88,8 @@ export function useHandTracking() {
     hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.42,
+      minTrackingConfidence: 0.42,
     });
 
     hands.onResults((results: Results) => {
@@ -50,31 +97,27 @@ export function useHandTracking() {
       
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         if (!hasHandDetected) console.log("Hand tracking active");
-        setHasHandDetected(true);
-
-        const fingers = [
-          { tip: 8, pip: 6 },
-          { tip: 12, pip: 10 },
-          { tip: 16, pip: 14 },
-          { tip: 20, pip: 18 }
-        ];
+        presenceConfidenceRef.current = Math.min(OPEN_CONFIDENCE_MAX, presenceConfidenceRef.current + 2);
+        setHasHandDetected(presenceConfidenceRef.current >= OPEN_CONFIDENCE_ON);
 
         const detectedOpenHands = results.multiHandLandmarks.reduce((total, landmarks) => {
-          let openFingers = 0;
-          fingers.forEach(f => {
-            if (landmarks[f.tip].y < landmarks[f.pip].y) {
-              openFingers++;
-            }
-          });
-          return total + (openFingers >= 3 ? 1 : 0);
+          return total + (isPalmOpen(landmarks) ? 1 : 0);
         }, 0);
+        lastOpenHandCountRef.current = detectedOpenHands;
+        openConfidenceRef.current = detectedOpenHands > 0
+          ? Math.min(OPEN_CONFIDENCE_MAX, openConfidenceRef.current + 2)
+          : Math.max(0, openConfidenceRef.current - 1);
 
-        setOpenHandCount(detectedOpenHands);
-        setIsHandOpen(detectedOpenHands > 0);
+        const handOpen = openConfidenceRef.current >= OPEN_CONFIDENCE_ON;
+        setOpenHandCount(handOpen ? Math.max(1, lastOpenHandCountRef.current) : 0);
+        setIsHandOpen(handOpen);
       } else {
-        setHasHandDetected(false);
-        setIsHandOpen(true);
-        setOpenHandCount(0);
+        presenceConfidenceRef.current = Math.max(0, presenceConfidenceRef.current - 1);
+        openConfidenceRef.current = Math.max(0, openConfidenceRef.current - 1);
+        const handOpen = openConfidenceRef.current >= OPEN_CONFIDENCE_ON;
+        setHasHandDetected(presenceConfidenceRef.current >= OPEN_CONFIDENCE_ON);
+        setIsHandOpen(handOpen);
+        setOpenHandCount(handOpen ? Math.max(1, lastOpenHandCountRef.current) : 0);
       }
     });
 
@@ -150,7 +193,10 @@ export function useHandTracking() {
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setIsCameraActive(false);
-    setIsHandOpen(true);
+    presenceConfidenceRef.current = 0;
+    openConfidenceRef.current = 0;
+    lastOpenHandCountRef.current = 0;
+    setIsHandOpen(false);
     setHasHandDetected(false);
     setOpenHandCount(0);
   };
