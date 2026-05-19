@@ -200,7 +200,15 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, [mistCount]);
 
   const squareData = useMemo(() => {
-    const squares: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: number; screen: { col: number; row: number } }> = [];
+    const squares: Array<{
+      position: THREE.Vector3;
+      rotation: THREE.Euler;
+      scale: number;
+      drift: THREE.Vector3;
+      phase: number;
+      speed: number;
+      screen: { col: number; row: number };
+    }> = [];
     const squaresPerScreen = 72;
     const squareCols = 14;
     const squareRows = Math.ceil(squaresPerScreen / squareCols);
@@ -219,6 +227,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           ),
           rotation: new THREE.Euler(0, 0, Math.random() * Math.PI),
           scale: 0.055 + Math.random() * 0.04,
+          drift: new THREE.Vector3(
+            0.18 + Math.random() * 0.42,
+            0.14 + Math.random() * 0.36,
+            0.12 + Math.random() * 0.3
+          ),
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.65 + Math.random() * 1.15,
           screen,
         });
       }
@@ -683,15 +698,19 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           pulse = Math.sin(delayed * Math.PI) * 0.9;
         }
 
+        const freePower = 0.75 + intensity * 1.4 + pulse * 1.15;
+        const sway = Math.sin(time * data.speed + data.phase);
+        const lift = Math.cos(time * (data.speed * 0.82) + data.phase * 1.37);
+        const float = Math.sin(time * (data.speed * 0.56) + data.phase * 0.71);
         squareMatrixObject.position.set(
-          data.position.x + Math.sin(time * 0.7 + i * 1.37) * 0.04,
-          data.position.y + Math.cos(time * 0.6 + i * 1.91) * 0.035,
-          data.position.z + Math.sin(time * 0.8 + i * 0.73) * 0.04
+          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55,
+          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42,
+          data.position.z + float * data.drift.z * freePower
         );
         squareMatrixObject.rotation.set(
           0,
           0,
-          data.rotation.z + time * (0.28 + pulse * 0.45) + Math.cos(time * 0.9 + i) * 0.08
+          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1) + Math.cos(time * 1.2 + i) * 0.18
         );
         squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + pulse * 1.25));
         squareMatrixObject.updateMatrix();
