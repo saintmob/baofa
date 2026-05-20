@@ -9,3 +9,7 @@ export const VJ_SCREEN_BASE_URL = 'http://localhost:4302/screen';
 export function getVjScreenUrl(screenId: string) {
   return `${VJ_SCREEN_BASE_URL}/${encodeURIComponent(screenId)}`;
 }
+
+export function getBaofaScreenUrl(screenId: string) {
+  return `${BAOFA_NATIVE_URL}/screen/${encodeURIComponent(screenId)}`;
+}

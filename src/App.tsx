@@ -10,8 +10,9 @@ import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
 import { BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
+import { fetchScreenRoutes, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, RotateCcw } from 'lucide-react';
+import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, RotateCcw, Route } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
@@ -74,6 +75,9 @@ function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
 }
 
 function getInitialScreenId() {
+  const screenMatch = window.location.pathname.match(/^\/screen\/([^/]+)/);
+  const routeScreenId = screenMatch ? decodeURIComponent(screenMatch[1]) : '';
+  if (isKnownScreenId(routeScreenId)) return routeScreenId;
   const saved = localStorage.getItem('baofa-screen-id');
   return isKnownScreenId(saved) ? saved! : DEFAULT_SCREEN_ID;
 }
@@ -142,6 +146,8 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
 }
 
 export default function App() {
+  const screenMatch = window.location.pathname.match(/^\/screen\/([^/]+)/);
+  const routeScreenId = screenMatch ? decodeURIComponent(screenMatch[1]) : '';
   const { isStarted, startAudio, triggerNote, setMusicEvolution, evolution, getAudioData } = useAudio();
   const { isHandOpen, openHandCount, hasHandDetected, isCameraActive, cameraError, startCamera, stopCamera } = useHandTracking();
   const [audioData, setAudioData] = useState(new Float32Array(1024));
@@ -160,6 +166,8 @@ export default function App() {
   const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
+  const [screenRoute, setScreenRoute] = useState<ScreenRoute | null>(null);
+  const [screenRouteError, setScreenRouteError] = useState('');
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -297,6 +305,38 @@ export default function App() {
   }, [screenId]);
 
   useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    setScreenId(routeScreenId);
+    setIsMaster(false);
+    setIsOverview(false);
+  }, [routeScreenId]);
+
+  useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    const controller = new AbortController();
+    let timer = 0;
+
+    const loadRoute = async () => {
+      try {
+        const routes = await fetchScreenRoutes(controller.signal);
+        setScreenRoute(routes[routeScreenId] || null);
+        setScreenRouteError('');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setScreenRouteError(error instanceof Error ? error.message : String(error));
+      }
+      timer = window.setTimeout(loadRoute, 2000);
+    };
+
+    void loadRoute();
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [routeScreenId]);
+
+  useEffect(() => {
     localStorage.setItem('baofa-role', isMaster ? 'master' : 'screen');
   }, [isMaster]);
 
@@ -430,6 +470,22 @@ export default function App() {
     showControlRef.current?.publishState({
       status: 'online',
       screenTopology: SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
+      screenRegistry: SCREEN_LAYOUT_ITEMS.map((screen, index) => ({
+        id: screen.id,
+        label: `Screen ${screen.id}`,
+        enabled: true,
+        physicalIndex: index + 1,
+      })),
+      screenRoutes: Object.fromEntries(SCREEN_LAYOUT_ITEMS.map((screen) => [
+        screen.id,
+        {
+          screenId: screen.id,
+          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : undefined,
+          status: 'online',
+          source: 'baofa',
+          updatedAt: Date.now(),
+        },
+      ])),
       screenId,
       role: isMaster ? 'master' : 'screen',
       overview: isOverview,
@@ -457,6 +513,30 @@ export default function App() {
     screenPulse,
     treeGrowth,
   ]);
+
+  if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
+    const targetUrl = screenRoute.url || getVjScreenUrl(routeScreenId);
+
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
+        <div className="flex max-w-md flex-col items-center gap-4 text-center">
+          <Route size={34} className="text-cyan-200/70" />
+          <div>
+            <div className="text-sm font-mono uppercase tracking-[0.24em] text-white/80">Screen routed to VJ / 已路由到 VJ</div>
+            <div className="mt-2 text-xs font-mono uppercase tracking-[0.18em] text-white/45">{routeScreenId}</div>
+          </div>
+          <a
+            href={targetUrl}
+            className="inline-flex h-10 items-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-4 text-[10px] font-mono uppercase tracking-widest text-cyan-100 hover:bg-cyan-300 hover:text-black"
+          >
+            <ExternalLink size={14} />
+            Open VJ screen / 打开 VJ 屏
+          </a>
+          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
