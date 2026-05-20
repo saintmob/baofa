@@ -30,6 +30,7 @@ const TREE_COLOR_RAMP_MS = 4500;
 const TREE_BRIGHT_HOLD_MS = 11000;
 const TREE_FADE_MS = 8500;
 const STANDBY_PROMPT_DELAY_MS = 5500;
+const ROUND_STANDBY_PROMPT_DELAY_MS = 2000;
 
 function getScreenWorldPoint(id: string) {
   const point = getScreenWorldPointData(id);
@@ -187,6 +188,7 @@ export default function App() {
   const gestureCompletedRef = useRef(false);
   const gestureRoundLockedRef = useRef(false);
   const gestureNeedsReleaseRef = useRef(false);
+  const gestureInputArmedRef = useRef(false);
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
   const standbyPromptTimeoutRef = useRef<number | null>(null);
@@ -254,6 +256,7 @@ export default function App() {
           gestureCompletedRef.current = false;
           gestureRoundLockedRef.current = false;
           gestureNeedsReleaseRef.current = false;
+          gestureInputArmedRef.current = false;
           treeGrowthRef.current = 0;
           treeTriggeredRef.current = false;
           treeCompletedAtRef.current = null;
@@ -319,11 +322,13 @@ export default function App() {
     }
   }, []);
 
-  const scheduleStandbyPrompt = useCallback((delayMs = STANDBY_PROMPT_DELAY_MS) => {
+  const scheduleStandbyPrompt = useCallback((delayMs = STANDBY_PROMPT_DELAY_MS, armGestureInput = true) => {
+    gestureInputArmedRef.current = armGestureInput;
     setStandbyPromptReady(false);
     if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
     standbyPromptTimeoutRef.current = window.setTimeout(() => {
       standbyPromptTimeoutRef.current = null;
+      gestureInputArmedRef.current = false;
       setStandbyPromptReady(true);
     }, delayMs);
   }, []);
@@ -372,7 +377,7 @@ export default function App() {
     if (gestureNeedsReleaseRef.current && !handGestureActive) {
       gestureNeedsReleaseRef.current = false;
     }
-    const handGestureEligible = handGestureActive && !gestureNeedsReleaseRef.current;
+    const handGestureEligible = handGestureActive && gestureInputArmedRef.current && !gestureNeedsReleaseRef.current;
     if (!treeTriggeredRef.current && !gestureCompletedRef.current && !gestureRoundLockedRef.current) {
       const direction = handGestureEligible ? 1 : -1;
       const duration = handGestureEligible ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
@@ -428,9 +433,10 @@ export default function App() {
           setGestureActive(false);
           gestureRoundLockedRef.current = false;
           setGestureRoundLocked(false);
-          gestureNeedsReleaseRef.current = handGestureActive;
+          gestureNeedsReleaseRef.current = false;
+          gestureInputArmedRef.current = false;
           setMode('idle');
-          scheduleStandbyPrompt();
+          scheduleStandbyPrompt(ROUND_STANDBY_PROMPT_DELAY_MS, false);
           syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
         }
       } else {
@@ -464,7 +470,7 @@ export default function App() {
     }
 
     if (treeControllerRef.current || !treeTriggeredRef.current) {
-      setGestureActive(treeFadingRef.current ? false : handGestureActive);
+      setGestureActive(treeFadingRef.current ? false : handGestureActive && (gestureInputArmedRef.current || treeTriggeredRef.current));
       const floor = treeFadingRef.current ? 0.02 : treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
       intensityRef.current = treeFadingRef.current ? intensityRef.current : Math.max(floor, intensityRef.current - 0.006);
       setIntensity(intensityRef.current);
@@ -523,6 +529,7 @@ export default function App() {
     gestureCompletedRef.current = false;
     gestureRoundLockedRef.current = false;
     gestureNeedsReleaseRef.current = false;
+    gestureInputArmedRef.current = false;
     treeGrowthRef.current = 0;
     treeTriggeredRef.current = false;
     treeCompletedAtRef.current = null;
@@ -557,7 +564,14 @@ export default function App() {
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
 
-    scheduleStandbyPrompt();
+    const canStartIdleRound =
+      treeGrowthRef.current <= 0 &&
+      !treeTriggeredRef.current &&
+      !gestureStartPending &&
+      !gestureRoundLockedRef.current;
+    if (canStartIdleRound) {
+      scheduleStandbyPrompt(STANDBY_PROMPT_DELAY_MS, true);
+    }
 
     if (!isStarted) await startAudio();
     await Tone.start();
@@ -616,7 +630,6 @@ export default function App() {
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
   const showStandbyPrompt =
-    mode === 'idle' &&
     treeGrowth <= 0 &&
     gestureProgress <= 0 &&
     !showGestureProgress &&
