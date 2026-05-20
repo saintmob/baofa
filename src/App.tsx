@@ -22,6 +22,10 @@ import {
   type ScreenLayoutItem,
 } from './screenLayout';
 
+const GESTURE_CONFIRM_MS = 5000;
+const GESTURE_RETREAT_MS = 1400;
+const GESTURE_FADE_MS = 520;
+
 function getScreenWorldPoint(id: string) {
   const point = getScreenWorldPointData(id);
   return new THREE.Vector3(point.x, point.y, point.z);
@@ -154,6 +158,8 @@ export default function App() {
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
   const [treeTriggered, setTreeTriggered] = useState(false);
+  const [gestureProgress, setGestureProgress] = useState(0);
+  const [showGestureProgress, setShowGestureProgress] = useState(false);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
@@ -165,6 +171,10 @@ export default function App() {
   const treeCompletedAtRef = useRef<number | null>(null);
   const treeBrightAtRef = useRef<number | null>(null);
   const treeFadingRef = useRef(false);
+  const gestureProgressRef = useRef(0);
+  const gestureCompletedRef = useRef(false);
+  const lastFrameTimeRef = useRef<number | null>(null);
+  const gestureStartTimeoutRef = useRef<number | null>(null);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
@@ -241,7 +251,12 @@ export default function App() {
   }, []);
 
   const startGestureGrowth = useCallback(() => {
+    if (treeTriggeredRef.current) return;
     const treeBasePoint = getScreenWorldPoint('F1');
+    gestureProgressRef.current = 0;
+    gestureCompletedRef.current = false;
+    setGestureProgress(0);
+    setShowGestureProgress(false);
     treeCompletedAtRef.current = null;
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
@@ -262,11 +277,42 @@ export default function App() {
   }, [syncToFirebase]);
 
   const animate = useCallback(() => {
+    const now = performance.now();
+    const deltaMs = lastFrameTimeRef.current === null ? 16.67 : Math.min(80, now - lastFrameTimeRef.current);
+    lastFrameTimeRef.current = now;
+
     setAudioData(getAudioData());
 
     const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-    if (handGestureActive && !treeTriggeredRef.current) {
-      startGestureGrowth();
+    if (!treeTriggeredRef.current && !gestureCompletedRef.current) {
+      const direction = handGestureActive ? 1 : -1;
+      const duration = handGestureActive ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
+      const nextProgress = THREE.MathUtils.clamp(
+        gestureProgressRef.current + direction * (deltaMs / duration),
+        0,
+        1
+      );
+
+      if (handGestureActive || nextProgress > 0) {
+        setShowGestureProgress(true);
+      } else if (gestureProgressRef.current > 0) {
+        setShowGestureProgress(false);
+      }
+
+      if (Math.abs(nextProgress - gestureProgressRef.current) > 0.001 || nextProgress === 0 || nextProgress === 1) {
+        gestureProgressRef.current = nextProgress;
+        setGestureProgress(nextProgress);
+      }
+
+      if (nextProgress >= 1) {
+        gestureCompletedRef.current = true;
+        setShowGestureProgress(false);
+        if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
+        gestureStartTimeoutRef.current = window.setTimeout(() => {
+          gestureStartTimeoutRef.current = null;
+          startGestureGrowth();
+        }, GESTURE_FADE_MS);
+      }
     }
 
     if (treeTriggeredRef.current) {
@@ -329,6 +375,7 @@ export default function App() {
     requestRef.current = requestAnimationFrame(animate);
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
     };
   }, [animate]);
 
@@ -359,6 +406,12 @@ export default function App() {
   }, [isOverview]);
 
   const resetTreeGrowth = () => {
+    if (gestureStartTimeoutRef.current) {
+      window.clearTimeout(gestureStartTimeoutRef.current);
+      gestureStartTimeoutRef.current = null;
+    }
+    gestureProgressRef.current = 0;
+    gestureCompletedRef.current = false;
     treeGrowthRef.current = 0;
     treeTriggeredRef.current = false;
     treeCompletedAtRef.current = null;
@@ -369,6 +422,8 @@ export default function App() {
     setTreeGrowth(0);
     setTreeTriggered(false);
     setGestureActive(false);
+    setGestureProgress(0);
+    setShowGestureProgress(false);
     setIntensity(0.08);
     setMusicEvolution(0);
     setMode('idle');
@@ -441,6 +496,15 @@ export default function App() {
     }, 650);
   };
 
+  const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
+  const showStandbyPrompt =
+    !isStarted &&
+    mode === 'idle' &&
+    treeGrowth <= 0 &&
+    gestureProgress <= 0 &&
+    !showGestureProgress &&
+    !handGestureActive;
+
   return (
     <div
       className="fixed inset-0 bg-[#02040a] cursor-default overflow-hidden select-none"
@@ -502,7 +566,7 @@ export default function App() {
       )}
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
-        {!isStarted && (
+        {showStandbyPrompt && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
               <div className="text-sm font-mono uppercase tracking-[0.32em] text-white/80">Click To Begin / 点击开始</div>
@@ -510,6 +574,30 @@ export default function App() {
             </div>
           </div>
         )}
+
+        <AnimatePresence>
+          {showGestureProgress && !treeTriggered && (
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98 }}
+              transition={{ duration: GESTURE_FADE_MS / 1000, ease: 'easeOut' }}
+              className="absolute inset-x-6 top-1/2 mx-auto flex w-[min(520px,calc(100vw-3rem))] -translate-y-1/2 flex-col items-center gap-3"
+            >
+              <div className="w-full overflow-hidden rounded border border-cyan-200/25 bg-black/45 p-1 shadow-[0_0_28px_rgba(34,211,238,0.16)] backdrop-blur-md">
+                <div className="h-2.5 overflow-hidden rounded-sm bg-white/10">
+                  <div
+                    className="h-full rounded-sm bg-gradient-to-r from-cyan-200 via-emerald-200 to-white shadow-[0_0_18px_rgba(125,249,232,0.65)]"
+                    style={{ width: `${Math.round(gestureProgress * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-cyan-100/75">
+                Hold palm steady {Math.round(gestureProgress * 100)}%
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
