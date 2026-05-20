@@ -3,7 +3,6 @@ import { useAudio } from './hooks/useAudio';
 import { useHandTracking } from './hooks/useHandTracking';
 import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as Tone from 'tone';
 import * as THREE from 'three';
@@ -27,7 +26,9 @@ const GESTURE_RETREAT_MS = 1400;
 const GESTURE_FADE_MS = 520;
 const STALE_TREE_STATE_MS = 30000;
 const TREE_COLOR_RAMP_MS = 4500;
-const TREE_BRIGHT_HOLD_MS = 6000;
+const TREE_BRIGHT_HOLD_MS = 11000;
+const TREE_FADE_MS = 8500;
+const STANDBY_PROMPT_DELAY_MS = 5500;
 
 function getScreenWorldPoint(id: string) {
   const point = getScreenWorldPointData(id);
@@ -164,6 +165,7 @@ export default function App() {
   const [gestureProgress, setGestureProgress] = useState(0);
   const [showGestureProgress, setShowGestureProgress] = useState(false);
   const [gestureStartPending, setGestureStartPending] = useState(false);
+  const [standbyPromptReady, setStandbyPromptReady] = useState(true);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
@@ -179,6 +181,7 @@ export default function App() {
   const gestureCompletedRef = useRef(false);
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
+  const standbyPromptTimeoutRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
@@ -242,6 +245,7 @@ export default function App() {
           setGestureProgress(0);
           setShowGestureProgress(false);
           setGestureStartPending(false);
+          setStandbyPromptReady(true);
           setIntensity(0.08);
           setMusicEvolution(0);
           setMode('idle');
@@ -284,6 +288,15 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'global/state');
     }
+  }, []);
+
+  const scheduleStandbyPrompt = useCallback((delayMs = STANDBY_PROMPT_DELAY_MS) => {
+    setStandbyPromptReady(false);
+    if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
+    standbyPromptTimeoutRef.current = window.setTimeout(() => {
+      standbyPromptTimeoutRef.current = null;
+      setStandbyPromptReady(true);
+    }, delayMs);
   }, []);
 
   const startGestureGrowth = useCallback(() => {
@@ -355,9 +368,9 @@ export default function App() {
 
     if (treeTriggeredRef.current) {
       if (treeFadingRef.current) {
-        treeGrowthRef.current = Math.max(0, treeGrowthRef.current - 0.006);
-        intensityRef.current = Math.max(0.08, intensityRef.current - 0.01);
-        evolutionRef.current = Math.max(0, evolutionRef.current - 0.012);
+        treeGrowthRef.current = Math.max(0, treeGrowthRef.current - deltaMs / TREE_FADE_MS);
+        intensityRef.current = Math.max(0.08, intensityRef.current - deltaMs / TREE_FADE_MS);
+        evolutionRef.current = Math.max(0, evolutionRef.current - deltaMs / TREE_FADE_MS);
         setMusicEvolution(evolutionRef.current);
         if (treeGrowthRef.current <= 0.001) {
           treeGrowthRef.current = 0;
@@ -371,6 +384,7 @@ export default function App() {
           setTreeTriggered(false);
           setGestureActive(false);
           setMode('idle');
+          scheduleStandbyPrompt();
           syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
         }
       } else {
@@ -405,13 +419,14 @@ export default function App() {
     setIntensity(intensityRef.current);
 
     requestRef.current = requestAnimationFrame(animate);
-  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, startGestureGrowth, syncToFirebase]);
+  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, startGestureGrowth, syncToFirebase]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
+      if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
     };
   }, [animate]);
 
@@ -461,6 +476,7 @@ export default function App() {
     setGestureProgress(0);
     setShowGestureProgress(false);
     setGestureStartPending(false);
+    setStandbyPromptReady(true);
     setIntensity(0.08);
     setMusicEvolution(0);
     setMode('idle');
@@ -477,6 +493,8 @@ export default function App() {
   const handleSplashPointerDown = async (e: React.PointerEvent) => {
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
+
+    scheduleStandbyPrompt();
 
     if (!isStarted) await startAudio();
     await Tone.start();
@@ -540,6 +558,7 @@ export default function App() {
     gestureProgress <= 0 &&
     !showGestureProgress &&
     !gestureStartPending &&
+    standbyPromptReady &&
     !handGestureActive;
 
   return (
@@ -550,7 +569,7 @@ export default function App() {
       onPointerUp={handleSplashPointerUp}
     >
       <div className="absolute inset-0 z-0 pointer-events-none">
-        <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
+        <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={0.75} gl={{ antialias: false, powerPreference: 'low-power' }}>
           <ambientLight intensity={0.45} />
           <ParticleScene
             audioData={audioData}
@@ -566,13 +585,6 @@ export default function App() {
             isPaused={false}
           />
           {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
-          <EffectComposer>
-            <Bloom
-              intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
-              luminanceThreshold={isOverview ? 0.28 : 0.08}
-              luminanceSmoothing={0.9}
-            />
-          </EffectComposer>
         </Canvas>
       </div>
 
