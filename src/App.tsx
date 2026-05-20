@@ -25,6 +25,7 @@ import {
 const GESTURE_CONFIRM_MS = 5000;
 const GESTURE_RETREAT_MS = 1400;
 const GESTURE_FADE_MS = 520;
+const STALE_TREE_STATE_MS = 30000;
 
 function getScreenWorldPoint(id: string) {
   const point = getScreenWorldPointData(id);
@@ -160,6 +161,7 @@ export default function App() {
   const [treeTriggered, setTreeTriggered] = useState(false);
   const [gestureProgress, setGestureProgress] = useState(0);
   const [showGestureProgress, setShowGestureProgress] = useState(false);
+  const [gestureStartPending, setGestureStartPending] = useState(false);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
@@ -175,6 +177,7 @@ export default function App() {
   const gestureCompletedRef = useRef(false);
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
+  const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
@@ -214,6 +217,37 @@ export default function App() {
         setIntensity(data.intensity);
       }
       if (typeof data.treeGrowth === 'number') {
+        const lastInteractionTime = typeof data.lastInteraction?.timestamp === 'number' ? data.lastInteraction.timestamp : 0;
+        const isStaleTreeState =
+          data.treeGrowth > 0.01 &&
+          lastInteractionTime > 0 &&
+          Date.now() - lastInteractionTime > STALE_TREE_STATE_MS;
+
+        if (isStaleTreeState && !staleTreeResetRef.current) {
+          staleTreeResetRef.current = true;
+          gestureProgressRef.current = 0;
+          gestureCompletedRef.current = false;
+          treeGrowthRef.current = 0;
+          treeTriggeredRef.current = false;
+          treeCompletedAtRef.current = null;
+          treeBrightAtRef.current = null;
+          treeFadingRef.current = false;
+          intensityRef.current = 0.08;
+          evolutionRef.current = 0;
+          setTreeGrowth(0);
+          setTreeTriggered(false);
+          setGestureActive(false);
+          setGestureProgress(0);
+          setShowGestureProgress(false);
+          setGestureStartPending(false);
+          setIntensity(0.08);
+          setMusicEvolution(0);
+          setMode('idle');
+          syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+          return;
+        }
+
+        staleTreeResetRef.current = data.treeGrowth <= 0.01 ? false : staleTreeResetRef.current;
         treeGrowthRef.current = data.treeGrowth;
         setTreeGrowth(data.treeGrowth);
         treeTriggeredRef.current = data.treeGrowth > 0.01;
@@ -257,6 +291,7 @@ export default function App() {
     gestureCompletedRef.current = false;
     setGestureProgress(0);
     setShowGestureProgress(false);
+    setGestureStartPending(false);
     treeCompletedAtRef.current = null;
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
@@ -306,6 +341,7 @@ export default function App() {
 
       if (nextProgress >= 1) {
         gestureCompletedRef.current = true;
+        setGestureStartPending(true);
         setShowGestureProgress(false);
         if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
         gestureStartTimeoutRef.current = window.setTimeout(() => {
@@ -316,12 +352,6 @@ export default function App() {
     }
 
     if (treeTriggeredRef.current) {
-      if (handGestureActive) {
-        treeCompletedAtRef.current = null;
-        treeBrightAtRef.current = null;
-        treeFadingRef.current = false;
-      }
-
       if (treeFadingRef.current) {
         treeGrowthRef.current = Math.max(0, treeGrowthRef.current - 0.006);
         intensityRef.current = Math.max(0.08, intensityRef.current - 0.01);
@@ -344,7 +374,7 @@ export default function App() {
       } else {
         const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
         treeGrowthRef.current = Math.min(1, treeGrowthRef.current + speed);
-        if (treeGrowthRef.current >= 1 && !handGestureActive) {
+        if (treeGrowthRef.current >= 1) {
           treeCompletedAtRef.current ??= Date.now();
           intensityRef.current = Math.min(1, intensityRef.current + 0.01);
           evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
@@ -424,6 +454,7 @@ export default function App() {
     setGestureActive(false);
     setGestureProgress(0);
     setShowGestureProgress(false);
+    setGestureStartPending(false);
     setIntensity(0.08);
     setMusicEvolution(0);
     setMode('idle');
@@ -503,6 +534,7 @@ export default function App() {
     treeGrowth <= 0 &&
     gestureProgress <= 0 &&
     !showGestureProgress &&
+    !gestureStartPending &&
     !handGestureActive;
 
   return (
