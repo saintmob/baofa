@@ -16,6 +16,7 @@ import {
   SCREEN_LAYOUT_ITEMS,
   STAGE_BOUNDS,
   getNearestScreenId,
+  getScreenDisplayId,
   getScreenWorldPointData,
   isKnownScreenId,
   type ScreenLayoutItem,
@@ -161,6 +162,10 @@ export default function App() {
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
   const treeTriggeredRef = useRef(false);
+  const treeCompletedAtRef = useRef<number | null>(null);
+  const treeBrightAtRef = useRef<number | null>(null);
+  const treeFadingRef = useRef(false);
+  const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
 
@@ -189,7 +194,10 @@ export default function App() {
       setConnectionStatus('connected');
       const data = snapshot.data();
 
-      if (typeof data.evolution === 'number') setMusicEvolution(data.evolution);
+      if (typeof data.evolution === 'number') {
+        evolutionRef.current = data.evolution;
+        setMusicEvolution(data.evolution);
+      }
       if (data.mode) setMode(data.mode);
       if (typeof data.intensity === 'number') {
         intensityRef.current = data.intensity;
@@ -200,6 +208,11 @@ export default function App() {
         setTreeGrowth(data.treeGrowth);
         treeTriggeredRef.current = data.treeGrowth > 0.01;
         setTreeTriggered(data.treeGrowth > 0.01);
+        if (data.treeGrowth < 0.99) {
+          treeCompletedAtRef.current = null;
+          treeBrightAtRef.current = null;
+          treeFadingRef.current = false;
+        }
       }
       if (typeof data.gestureActive === 'boolean') setGestureActive(data.gestureActive);
       if (data.lastInteraction && data.lastInteraction.timestamp > lastSyncTimeRef.current) {
@@ -228,6 +241,10 @@ export default function App() {
   }, []);
 
   const startGestureGrowth = useCallback(() => {
+    const treeBasePoint = getScreenWorldPoint('F1');
+    treeCompletedAtRef.current = null;
+    treeBrightAtRef.current = null;
+    treeFadingRef.current = false;
     treeTriggeredRef.current = true;
     treeGrowthRef.current = Math.max(treeGrowthRef.current, 0.08);
     setTreeTriggered(true);
@@ -240,7 +257,7 @@ export default function App() {
       gestureActive: true,
       intensity: intensityRef.current,
       mode: 'flow',
-      lastInteraction: { x: 0, y: -14, z: 0, timestamp: Date.now() },
+      lastInteraction: { x: treeBasePoint.x, y: treeBasePoint.y, z: treeBasePoint.z, timestamp: Date.now() },
     });
   }, [syncToFirebase]);
 
@@ -253,18 +270,60 @@ export default function App() {
     }
 
     if (treeTriggeredRef.current) {
-      const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
-      treeGrowthRef.current = Math.min(1, treeGrowthRef.current + speed);
+      if (handGestureActive) {
+        treeCompletedAtRef.current = null;
+        treeBrightAtRef.current = null;
+        treeFadingRef.current = false;
+      }
+
+      if (treeFadingRef.current) {
+        treeGrowthRef.current = Math.max(0, treeGrowthRef.current - 0.006);
+        intensityRef.current = Math.max(0.08, intensityRef.current - 0.01);
+        evolutionRef.current = Math.max(0, evolutionRef.current - 0.012);
+        setMusicEvolution(evolutionRef.current);
+        if (treeGrowthRef.current <= 0.001) {
+          treeGrowthRef.current = 0;
+          treeTriggeredRef.current = false;
+          treeCompletedAtRef.current = null;
+          treeBrightAtRef.current = null;
+          treeFadingRef.current = false;
+          intensityRef.current = 0.08;
+          evolutionRef.current = 0;
+          setMusicEvolution(0);
+          setTreeTriggered(false);
+          setGestureActive(false);
+          setMode('idle');
+          syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+        }
+      } else {
+        const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
+        treeGrowthRef.current = Math.min(1, treeGrowthRef.current + speed);
+        if (treeGrowthRef.current >= 1 && !handGestureActive) {
+          treeCompletedAtRef.current ??= Date.now();
+          intensityRef.current = Math.min(1, intensityRef.current + 0.01);
+          evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
+          setMusicEvolution(evolutionRef.current);
+
+          if (intensityRef.current >= 0.995 && evolutionRef.current >= 0.995) {
+            treeBrightAtRef.current ??= Date.now();
+          }
+
+          if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > 10000) {
+            treeFadingRef.current = true;
+            setMode('flow');
+          }
+        }
+      }
       setTreeGrowth(treeGrowthRef.current);
     }
 
-    setGestureActive(handGestureActive);
-    const floor = treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
-    intensityRef.current = Math.max(floor, intensityRef.current - 0.006);
+    setGestureActive(treeFadingRef.current ? false : handGestureActive);
+    const floor = treeFadingRef.current ? 0.02 : treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
+    intensityRef.current = treeFadingRef.current ? intensityRef.current : Math.max(floor, intensityRef.current - 0.006);
     setIntensity(intensityRef.current);
 
     requestRef.current = requestAnimationFrame(animate);
-  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, startGestureGrowth]);
+  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, startGestureGrowth, syncToFirebase]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
@@ -280,6 +339,7 @@ export default function App() {
         treeGrowth: treeGrowthRef.current,
         gestureActive,
         intensity: intensityRef.current,
+        evolution: evolutionRef.current,
         mode: 'flow',
       });
     }, 500);
@@ -301,13 +361,18 @@ export default function App() {
   const resetTreeGrowth = () => {
     treeGrowthRef.current = 0;
     treeTriggeredRef.current = false;
+    treeCompletedAtRef.current = null;
+    treeBrightAtRef.current = null;
+    treeFadingRef.current = false;
     intensityRef.current = 0.08;
+    evolutionRef.current = 0;
     setTreeGrowth(0);
     setTreeTriggered(false);
     setGestureActive(false);
     setIntensity(0.08);
+    setMusicEvolution(0);
     setMode('idle');
-    syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, mode: 'idle' });
+    syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
   };
 
   const handleScreenChange = (id: string) => {
@@ -343,9 +408,10 @@ export default function App() {
     const gap = now - lastClickTimeRef.current;
     lastClickTimeRef.current = now;
     const tempoBoost = gap < 180 ? 0.62 : gap < 320 ? 0.5 : gap < 520 ? 0.36 : gap < 780 ? 0.26 : 0.18;
-    const newIntensity = Math.min(1, intensityRef.current + tempoBoost);
-    const newEvolution = Math.min(1, evolution + 0.025);
+    const newIntensity = treeTriggeredRef.current ? intensityRef.current : Math.min(1, intensityRef.current + tempoBoost);
+    const newEvolution = treeTriggeredRef.current ? evolutionRef.current : Math.min(1, evolutionRef.current + 0.025);
     intensityRef.current = newIntensity;
+    evolutionRef.current = newEvolution;
     setMusicEvolution(newEvolution);
 
     syncToFirebase({
@@ -400,7 +466,11 @@ export default function App() {
           />
           {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
           <EffectComposer>
-            <Bloom intensity={1.15 + intensity * 1.75} luminanceThreshold={0.18} luminanceSmoothing={0.92} />
+            <Bloom
+              intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
+              luminanceThreshold={isOverview ? 0.28 : 0.08}
+              luminanceSmoothing={0.9}
+            />
           </EffectComposer>
         </Canvas>
       </div>
@@ -415,7 +485,7 @@ export default function App() {
               className="absolute rounded-sm border border-emerald-300/35 bg-emerald-300/[0.035] text-[9px] font-mono tracking-widest text-emerald-100/80"
               style={getLayoutStyle(MASTER_SCREEN)}
             >
-              <span className="absolute left-2 top-2">MASTER</span>
+              <span className="absolute left-2 top-2">{getScreenDisplayId(MASTER_SCREEN.id)}</span>
               <span className="absolute bottom-2 right-2">大屏幕</span>
             </div>
             {SCREEN_LAYOUT_ITEMS.map((screen) => (
@@ -424,7 +494,7 @@ export default function App() {
                 className="absolute rounded-sm border border-cyan-300/20 bg-cyan-300/[0.025]"
                 style={getLayoutStyle(screen)}
               >
-                <span className="absolute left-1.5 top-1 text-[9px] font-mono tracking-widest text-cyan-100/65">{screen.id}</span>
+                <span className="absolute left-1.5 top-1 text-[9px] font-mono tracking-widest text-cyan-100/65">{getScreenDisplayId(screen.id)}</span>
               </div>
             ))}
           </div>
@@ -497,7 +567,7 @@ export default function App() {
                 <div>
                   <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/70">Screen Routing / 屏幕排序</div>
                   <div className="mt-1 text-[10px] font-mono uppercase tracking-[0.16em] text-cyan-300/60">
-                    {isOverview ? 'All Screens Preview / 全屏预览' : isMaster ? 'Master Position / 主屏位置' : `Display ${screenId} / 显示屏 ${screenId}`}
+                    {isOverview ? 'All Screens Preview / 全屏预览' : isMaster ? `Display ${getScreenDisplayId('MASTER')} / 主屏位置` : `Display ${getScreenDisplayId(screenId)} / 显示屏 ${getScreenDisplayId(screenId)}`}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -518,7 +588,7 @@ export default function App() {
                     }}
                     className={`h-9 px-3 rounded border text-[10px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200' : 'border-white/10 bg-white/5 text-white/45'}`}
                   >
-                    Master / 主屏
+                    {getScreenDisplayId('MASTER')} / 主屏
                   </button>
                 </div>
               </div>
@@ -532,7 +602,7 @@ export default function App() {
                   className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
                   style={getLayoutStyle(MASTER_SCREEN)}
                 >
-                  大屏幕
+                  {getScreenDisplayId('MASTER')}
                 </button>
                 {SCREEN_LAYOUT_ITEMS.map((screen) => (
                   <button
@@ -541,7 +611,7 @@ export default function App() {
                     className={`absolute rounded-sm border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === screen.id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
                     style={getLayoutStyle(screen)}
                   >
-                    {screen.id}
+                    {getScreenDisplayId(screen.id)}
                   </button>
                 ))}
               </div>
@@ -622,7 +692,7 @@ export default function App() {
               Motion / 手势: {hasHandDetected ? (openHandCount > 0 ? `Open x${openHandCount} / 展开 ${openHandCount}` : 'Paused / 暂停') : 'Scanning / 扫描中'}
             </span>
           ) : (
-            `${isOverview ? 'Overview / 总览' : isMaster ? 'Master / 主屏' : `${screenId} / 显示屏`} / Camera Offline / 摄像头离线`
+            `${isOverview ? 'Overview / 总览' : isMaster ? `${getScreenDisplayId('MASTER')} / 主屏` : `${getScreenDisplayId(screenId)} / 显示屏`} / Camera Offline / 摄像头离线`
           )}
         </div>
       </div>
