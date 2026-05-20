@@ -182,6 +182,7 @@ export default function App() {
   const treeBrightAtRef = useRef<number | null>(null);
   const treeFadingRef = useRef(false);
   const treePhaseRef = useRef<TreePhase>('idle');
+  const treeControllerRef = useRef(false);
   const gestureProgressRef = useRef(0);
   const gestureCompletedRef = useRef(false);
   const gestureRoundLockedRef = useRef(false);
@@ -217,27 +218,29 @@ export default function App() {
       if (!snapshot.exists()) return;
       setConnectionStatus('connected');
       const data = snapshot.data();
+      const remoteTreePhase: TreePhase =
+        data.treePhase === 'growing' || data.treePhase === 'bright' || data.treePhase === 'fading'
+          ? data.treePhase
+          : data.treeGrowth > 0.01
+            ? 'growing'
+            : 'idle';
+      const remoteTreeActive = remoteTreePhase === 'growing' || remoteTreePhase === 'bright' || remoteTreePhase === 'fading';
+      const ignoreRemoteTreeState = treeControllerRef.current && treeTriggeredRef.current && remoteTreeActive;
 
-      if (typeof data.evolution === 'number') {
+      if (typeof data.evolution === 'number' && !ignoreRemoteTreeState) {
         evolutionRef.current = data.evolution;
         setMusicEvolution(data.evolution);
       }
-      if (data.mode) setMode(data.mode);
-      if (typeof data.intensity === 'number') {
+      if (data.mode && !ignoreRemoteTreeState) setMode(data.mode);
+      if (typeof data.intensity === 'number' && !ignoreRemoteTreeState) {
         intensityRef.current = data.intensity;
         setIntensity(data.intensity);
       }
       if (typeof data.treeGrowth === 'number') {
         const hasRemoteTreePhase =
           data.treePhase === 'growing' || data.treePhase === 'bright' || data.treePhase === 'fading' || data.treePhase === 'idle';
-        const remoteTreePhase: TreePhase =
-          data.treePhase === 'growing' || data.treePhase === 'bright' || data.treePhase === 'fading'
-            ? data.treePhase
-            : data.treeGrowth > 0.01
-              ? 'growing'
-              : 'idle';
         const lastInteractionTime = typeof data.lastInteraction?.timestamp === 'number' ? data.lastInteraction.timestamp : 0;
-        const isRemoteActiveRound = hasRemoteTreePhase && (remoteTreePhase === 'growing' || remoteTreePhase === 'bright' || remoteTreePhase === 'fading');
+        const isRemoteActiveRound = hasRemoteTreePhase && remoteTreeActive;
         const isStaleTreeState =
           data.treeGrowth > 0.01 &&
           !isRemoteActiveRound &&
@@ -255,6 +258,7 @@ export default function App() {
           treeBrightAtRef.current = null;
           treeFadingRef.current = false;
           treePhaseRef.current = 'idle';
+          treeControllerRef.current = false;
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setTreeGrowth(0);
@@ -271,6 +275,8 @@ export default function App() {
           syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
           return;
         }
+
+        if (ignoreRemoteTreeState) return;
 
         staleTreeResetRef.current = data.treeGrowth <= 0.01 ? false : staleTreeResetRef.current;
         treeGrowthRef.current = data.treeGrowth;
@@ -334,6 +340,7 @@ export default function App() {
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
     treePhaseRef.current = 'growing';
+    treeControllerRef.current = true;
     treeTriggeredRef.current = true;
     treeGrowthRef.current = Math.max(treeGrowthRef.current, 0.08);
     setTreeTriggered(true);
@@ -393,7 +400,7 @@ export default function App() {
       }
     }
 
-    if (treeTriggeredRef.current) {
+    if (treeTriggeredRef.current && treeControllerRef.current) {
       if (treeFadingRef.current) {
         treeGrowthRef.current = Math.max(0, treeGrowthRef.current - deltaMs / TREE_FADE_MS);
         intensityRef.current = Math.max(0.08, intensityRef.current - deltaMs / TREE_FADE_MS);
@@ -406,6 +413,7 @@ export default function App() {
           treeBrightAtRef.current = null;
           treeFadingRef.current = false;
           treePhaseRef.current = 'idle';
+          treeControllerRef.current = false;
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setMusicEvolution(0);
@@ -446,10 +454,12 @@ export default function App() {
       setTreeGrowth(treeGrowthRef.current);
     }
 
-    setGestureActive(treeFadingRef.current ? false : handGestureActive);
-    const floor = treeFadingRef.current ? 0.02 : treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
-    intensityRef.current = treeFadingRef.current ? intensityRef.current : Math.max(floor, intensityRef.current - 0.006);
-    setIntensity(intensityRef.current);
+    if (treeControllerRef.current || !treeTriggeredRef.current) {
+      setGestureActive(treeFadingRef.current ? false : handGestureActive);
+      const floor = treeFadingRef.current ? 0.02 : treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
+      intensityRef.current = treeFadingRef.current ? intensityRef.current : Math.max(floor, intensityRef.current - 0.006);
+      setIntensity(intensityRef.current);
+    }
 
     requestRef.current = requestAnimationFrame(animate);
   }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, startGestureGrowth, syncToFirebase]);
@@ -464,7 +474,7 @@ export default function App() {
   }, [animate]);
 
   useEffect(() => {
-    if (!treeTriggered) return;
+    if (!treeTriggered || !treeControllerRef.current) return;
     const id = window.setInterval(() => {
       syncToFirebase({
         treeGrowth: treeGrowthRef.current,
@@ -504,6 +514,7 @@ export default function App() {
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
     treePhaseRef.current = 'idle';
+    treeControllerRef.current = false;
     intensityRef.current = 0.08;
     evolutionRef.current = 0;
     setTreeGrowth(0);
