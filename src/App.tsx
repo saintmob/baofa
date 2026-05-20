@@ -328,7 +328,6 @@ export default function App() {
     if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
     standbyPromptTimeoutRef.current = window.setTimeout(() => {
       standbyPromptTimeoutRef.current = null;
-      gestureInputArmedRef.current = false;
       setStandbyPromptReady(true);
     }, delayMs);
   }, []);

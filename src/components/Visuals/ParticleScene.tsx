@@ -81,6 +81,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const fiberRef = useRef<THREE.LineSegments>(null);
   const rootFiberRef = useRef<THREE.LineSegments>(null);
   const squareFieldRef = useRef<THREE.InstancedMesh>(null);
+  const idleBlockRefs = useRef<Array<THREE.InstancedMesh | null>>([]);
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
   const count = 34000;
@@ -89,6 +90,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const energyCount = 6200;
   const pollenCount = 9800;
   const glyphCount = 1900;
+  const idleBlockCount = 2600;
   const shardCount = 90;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
@@ -300,6 +302,50 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     });
     return squares;
   }, []);
+
+  const idleBlockData = useMemo(() => {
+    const blocks: Array<{
+      position: THREE.Vector3;
+      rotation: THREE.Euler;
+      scale: number;
+      drift: THREE.Vector3;
+      spin: THREE.Vector3;
+      phase: number;
+      speed: number;
+      colorGroup: number;
+    }> = [];
+    for (let i = 0; i < idleBlockCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.pow(Math.random(), 0.68);
+      blocks.push({
+        position: new THREE.Vector3(
+          Math.cos(angle) * radius * 31 + (Math.random() - 0.5) * 3.8,
+          Math.sin(angle) * radius * 17 + (Math.random() - 0.5) * 2.4,
+          (Math.random() - 0.5) * 8
+        ),
+        rotation: new THREE.Euler(
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+          Math.random() * Math.PI
+        ),
+        scale: 0.018 + Math.random() * 0.022,
+        drift: new THREE.Vector3(
+          0.12 + Math.random() * 0.24,
+          0.08 + Math.random() * 0.18,
+          0.1 + Math.random() * 0.22
+        ),
+        spin: new THREE.Vector3(
+          (Math.random() - 0.5) * 1.8,
+          (Math.random() - 0.5) * 1.9,
+          (Math.random() - 0.5) * 2.4
+        ),
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.46 + Math.random() * 1.05,
+        colorGroup: i % 5,
+      });
+    }
+    return blocks;
+  }, [idleBlockCount]);
 
   const [energyPositions, energyInitial, energyOrder] = useMemo(() => {
     const pos = new Float32Array(energyCount * 3);
@@ -530,6 +576,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       if (!targetLayout) return;
       const target = layoutToWorldPoint(targetLayout);
       for (let copy = 0; copy < copies; copy++) {
+        const wobble = 0.7 + Math.random() * 1.5;
+        const phase = Math.random() * Math.PI * 2;
         const start = new THREE.Vector3(
           trunkCenterOffsetX + Math.sin(baseY * 0.48 + copy) * 0.7 + (Math.random() - 0.5) * 0.8,
           baseY + (Math.random() - 0.5) * 1.0,
@@ -547,13 +595,31 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         addSmoothStrand(
           [
             start,
-            start.clone().lerp(end, 0.28).add(new THREE.Vector3(branchSide * 2.8, controlLift + Math.random() * 1.4, (Math.random() - 0.5) * 1.2)),
-            start.clone().lerp(end, 0.68).add(new THREE.Vector3(branchSide * 3.6, Math.random() * 1.6 - 0.6, (Math.random() - 0.5) * 1.8)),
+            start.clone().lerp(end, 0.2).add(new THREE.Vector3(
+              branchSide * (1.2 + Math.sin(phase) * wobble),
+              controlLift + Math.random() * 1.8,
+              (Math.random() - 0.5) * 2.2
+            )),
+            start.clone().lerp(end, 0.42).add(new THREE.Vector3(
+              branchSide * (3.2 + Math.cos(phase * 0.7) * wobble * 1.4),
+              Math.sin(phase + copy * 0.43) * 1.35 + Math.random() * 1.1,
+              (Math.random() - 0.5) * 3.2
+            )),
+            start.clone().lerp(end, 0.64).add(new THREE.Vector3(
+              branchSide * (1.4 + Math.sin(phase * 1.3) * wobble * 1.8),
+              Math.cos(phase + copy * 0.31) * 1.6 - 0.4 + Math.random() * 1.0,
+              (Math.random() - 0.5) * 3.6
+            )),
+            start.clone().lerp(end, 0.82).add(new THREE.Vector3(
+              branchSide * (2.8 + Math.cos(phase * 1.6) * wobble),
+              Math.sin(phase * 0.9 + copy) * 1.1 + Math.random() * 0.9 - 0.5,
+              (Math.random() - 0.5) * 2.4
+            )),
             end,
           ],
           0.28 + Math.random() * 0.18,
           0.86 + Math.random() * 0.12,
-          22 + Math.floor(Math.random() * 8),
+          34 + Math.floor(Math.random() * 12),
           branchColor
         );
       }
@@ -937,6 +1003,47 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       mesh.instanceMatrix.needsUpdate = true;
     }
 
+    const idleBlockPalette = [
+      new THREE.Color("#2dd4bf"),
+      new THREE.Color("#22d3ee"),
+      new THREE.Color("#bef264"),
+      new THREE.Color("#38bdf8"),
+      new THREE.Color("#c084fc"),
+    ];
+    idleBlockRefs.current.forEach((mesh, groupIndex) => {
+      if (!mesh) return;
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      const idlePresence = visibleGrowth <= 0.001 && mode !== 'flow' && mode !== 'climax' ? 1 : 0;
+      const interactionBoost = mode === 'interaction' ? 1 : 0;
+      material.color
+        .copy(idleBlockPalette[groupIndex])
+        .lerp(tempoColor, Math.min(0.44, intensity * 0.24 + interactionBoost * 0.3))
+        .lerp(new THREE.Color("#ecfeff"), groupIndex === 0 ? 0.18 : 0.06);
+      material.opacity = (0.38 + intensity * 0.1) * idlePresence * (isOverviewScreen ? 0.44 : 1);
+      material.visible = material.opacity > 0.001;
+
+      let instanceIndex = 0;
+      idleBlockData.forEach((data) => {
+        if (data.colorGroup !== groupIndex) return;
+        const pulse = 0.9 + Math.sin(time * (1.15 + data.speed) + data.phase) * 0.22 + interactionBoost * 0.14;
+        squareMatrixObject.position.set(
+          data.position.x + Math.sin(time * data.speed + data.phase) * data.drift.x,
+          data.position.y + Math.cos(time * data.speed * 0.74 + data.phase) * data.drift.y,
+          data.position.z + Math.sin(time * data.speed * 0.52 + data.phase * 1.4) * data.drift.z
+        );
+        squareMatrixObject.rotation.set(
+          data.rotation.x + time * data.speed * data.spin.x + Math.sin(time * 0.71 + data.phase) * 0.55,
+          data.rotation.y + time * data.speed * data.spin.y + Math.cos(time * 0.63 + data.phase * 1.2) * 0.5,
+          data.rotation.z + time * data.speed * data.spin.z + Math.sin(time * 0.83 + data.phase * 0.7) * 0.65
+        );
+        squareMatrixObject.scale.setScalar(data.scale * pulse * (isOverviewScreen ? 0.62 : 0.82));
+        squareMatrixObject.updateMatrix();
+        mesh.setMatrixAt(instanceIndex, squareMatrixObject.matrix);
+        instanceIndex++;
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    });
+
     if (energyRef.current) {
       const posAttr = energyRef.current.geometry.attributes.position;
       for (let i = 0; i < energyCount; i++) {
@@ -1079,6 +1186,28 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           wireframe
         />
       </instancedMesh>
+
+      {["#2dd4bf", "#22d3ee", "#bef264", "#38bdf8", "#c084fc"].map((color, index) => (
+        <instancedMesh
+          key={`idle-block-${color}`}
+          ref={(mesh) => {
+            idleBlockRefs.current[index] = mesh;
+          }}
+          args={[undefined, undefined, Math.ceil(idleBlockData.length / 5)]}
+        >
+          <boxGeometry args={[1, 1, 0.34]} />
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={0}
+            side={THREE.DoubleSide}
+            depthTest={false}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </instancedMesh>
+      ))}
 
       <points ref={energyRef}>
         <bufferGeometry>
