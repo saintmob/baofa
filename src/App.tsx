@@ -26,6 +26,8 @@ const GESTURE_CONFIRM_MS = 5000;
 const GESTURE_RETREAT_MS = 1400;
 const GESTURE_FADE_MS = 520;
 const STALE_TREE_STATE_MS = 30000;
+const TREE_COLOR_RAMP_MS = 4500;
+const TREE_BRIGHT_HOLD_MS = 6000;
 
 function getScreenWorldPoint(id: string) {
   const point = getScreenWorldPointData(id);
@@ -380,11 +382,15 @@ export default function App() {
           evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
           setMusicEvolution(evolutionRef.current);
 
-          if (intensityRef.current >= 0.995 && evolutionRef.current >= 0.995) {
+          const completedElapsed = Date.now() - treeCompletedAtRef.current;
+          if (
+            (intensityRef.current >= 0.995 && evolutionRef.current >= 0.995) ||
+            completedElapsed > TREE_COLOR_RAMP_MS
+          ) {
             treeBrightAtRef.current ??= Date.now();
           }
 
-          if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > 10000) {
+          if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > TREE_BRIGHT_HOLD_MS) {
             treeFadingRef.current = true;
             setMode('flow');
           }
@@ -529,7 +535,6 @@ export default function App() {
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
   const showStandbyPrompt =
-    !isStarted &&
     mode === 'idle' &&
     treeGrowth <= 0 &&
     gestureProgress <= 0 &&
