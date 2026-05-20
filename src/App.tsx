@@ -99,6 +99,8 @@ type WebGLStats = {
   viewport: string;
 };
 
+type TreePhase = 'idle' | 'growing' | 'bright' | 'fading';
+
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
   const { gl, size } = useThree();
   const lastSampleRef = useRef(performance.now());
@@ -179,6 +181,7 @@ export default function App() {
   const treeCompletedAtRef = useRef<number | null>(null);
   const treeBrightAtRef = useRef<number | null>(null);
   const treeFadingRef = useRef(false);
+  const treePhaseRef = useRef<TreePhase>('idle');
   const gestureProgressRef = useRef(0);
   const gestureCompletedRef = useRef(false);
   const gestureRoundLockedRef = useRef(false);
@@ -225,9 +228,19 @@ export default function App() {
         setIntensity(data.intensity);
       }
       if (typeof data.treeGrowth === 'number') {
+        const hasRemoteTreePhase =
+          data.treePhase === 'growing' || data.treePhase === 'bright' || data.treePhase === 'fading' || data.treePhase === 'idle';
+        const remoteTreePhase: TreePhase =
+          data.treePhase === 'growing' || data.treePhase === 'bright' || data.treePhase === 'fading'
+            ? data.treePhase
+            : data.treeGrowth > 0.01
+              ? 'growing'
+              : 'idle';
         const lastInteractionTime = typeof data.lastInteraction?.timestamp === 'number' ? data.lastInteraction.timestamp : 0;
+        const isRemoteActiveRound = hasRemoteTreePhase && (remoteTreePhase === 'growing' || remoteTreePhase === 'bright' || remoteTreePhase === 'fading');
         const isStaleTreeState =
           data.treeGrowth > 0.01 &&
+          !isRemoteActiveRound &&
           lastInteractionTime > 0 &&
           Date.now() - lastInteractionTime > STALE_TREE_STATE_MS;
 
@@ -241,6 +254,7 @@ export default function App() {
           treeCompletedAtRef.current = null;
           treeBrightAtRef.current = null;
           treeFadingRef.current = false;
+          treePhaseRef.current = 'idle';
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setTreeGrowth(0);
@@ -254,7 +268,7 @@ export default function App() {
           setIntensity(0.08);
           setMusicEvolution(0);
           setMode('idle');
-          syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+          syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
           return;
         }
 
@@ -263,10 +277,12 @@ export default function App() {
         setTreeGrowth(data.treeGrowth);
         treeTriggeredRef.current = data.treeGrowth > 0.01;
         setTreeTriggered(data.treeGrowth > 0.01);
-        if (data.treeGrowth < 0.99) {
+        const keepLocalFading = treeFadingRef.current && data.treeGrowth > 0.01 && remoteTreePhase !== 'idle';
+        treePhaseRef.current = keepLocalFading ? 'fading' : remoteTreePhase;
+        treeFadingRef.current = keepLocalFading || remoteTreePhase === 'fading';
+        if (remoteTreePhase === 'idle' || (data.treeGrowth < 0.99 && remoteTreePhase !== 'fading')) {
           treeCompletedAtRef.current = null;
           treeBrightAtRef.current = null;
-          treeFadingRef.current = false;
         }
       }
       if (typeof data.gestureActive === 'boolean') setGestureActive(data.gestureActive);
@@ -317,6 +333,7 @@ export default function App() {
     treeCompletedAtRef.current = null;
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
+    treePhaseRef.current = 'growing';
     treeTriggeredRef.current = true;
     treeGrowthRef.current = Math.max(treeGrowthRef.current, 0.08);
     setTreeTriggered(true);
@@ -326,6 +343,7 @@ export default function App() {
     intensityRef.current = Math.max(intensityRef.current, 0.72);
     syncToFirebase({
       treeGrowth: treeGrowthRef.current,
+      treePhase: treePhaseRef.current,
       gestureActive: true,
       intensity: intensityRef.current,
       mode: 'flow',
@@ -387,6 +405,7 @@ export default function App() {
           treeCompletedAtRef.current = null;
           treeBrightAtRef.current = null;
           treeFadingRef.current = false;
+          treePhaseRef.current = 'idle';
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setMusicEvolution(0);
@@ -395,7 +414,7 @@ export default function App() {
           setGestureRoundLocked(false);
           setMode('idle');
           scheduleStandbyPrompt();
-          syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+          syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
         }
       } else {
         const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
@@ -412,12 +431,16 @@ export default function App() {
             completedElapsed > TREE_COLOR_RAMP_MS
           ) {
             treeBrightAtRef.current ??= Date.now();
+            treePhaseRef.current = 'bright';
           }
 
           if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > TREE_BRIGHT_HOLD_MS) {
             treeFadingRef.current = true;
+            treePhaseRef.current = 'fading';
             setMode('flow');
           }
+        } else {
+          treePhaseRef.current = 'growing';
         }
       }
       setTreeGrowth(treeGrowthRef.current);
@@ -445,6 +468,7 @@ export default function App() {
     const id = window.setInterval(() => {
       syncToFirebase({
         treeGrowth: treeGrowthRef.current,
+        treePhase: treePhaseRef.current,
         gestureActive,
         intensity: intensityRef.current,
         evolution: evolutionRef.current,
@@ -479,6 +503,7 @@ export default function App() {
     treeCompletedAtRef.current = null;
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
+    treePhaseRef.current = 'idle';
     intensityRef.current = 0.08;
     evolutionRef.current = 0;
     setTreeGrowth(0);
@@ -492,7 +517,7 @@ export default function App() {
     setIntensity(0.08);
     setMusicEvolution(0);
     setMode('idle');
-    syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+    syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
   };
 
   const handleScreenChange = (id: string) => {
