@@ -8,6 +8,7 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as Tone from 'tone';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
+import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, RotateCcw } from 'lucide-react';
 import {
@@ -155,6 +156,7 @@ export default function App() {
   const [treeTriggered, setTreeTriggered] = useState(false);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
+  const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
   const intensityRef = useRef(0.08);
@@ -163,6 +165,9 @@ export default function App() {
   const treeTriggeredRef = useRef(false);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
+  const showControlRef = useRef<ReturnType<typeof createShowControlClient> | null>(null);
+  const showControlClientIdRef = useRef(`baofa-${screenId}-${crypto.randomUUID().slice(0, 8)}`);
+  const showControlCommandRef = useRef<(command: ControlCommand) => void>(() => undefined);
 
   const checkConnection = useCallback(async () => {
     if (!db) {
@@ -374,6 +379,83 @@ export default function App() {
       setMode(treeTriggeredRef.current ? 'flow' : 'idle');
     }, 650);
   };
+
+  const applyShowControlCommand = useCallback((command: ControlCommand) => {
+    if (command.module && command.module !== 'interaction' && command.module !== 'show') return;
+    const value = command.value;
+
+    if ((command.command === 'setMode' || command.command === 'setInteractionMode') && typeof value === 'string') {
+      if (value === 'idle' || value === 'interaction' || value === 'flow' || value === 'climax') {
+        setMode(value);
+        syncToFirebase({ mode: value });
+      }
+    } else if (command.command === 'setIntensity' && typeof value === 'number') {
+      const next = Math.max(0, Math.min(1, value));
+      intensityRef.current = next;
+      setIntensity(next);
+      syncToFirebase({ intensity: next });
+    } else if (command.command === 'resetTree') {
+      resetTreeGrowth();
+    } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
+      handleScreenChange(value);
+    } else if (command.command === 'pulseScreen') {
+      const source = typeof value === 'string' && isKnownScreenId(value)
+        ? value
+        : isKnownScreenId(command.target)
+          ? command.target
+          : screenId;
+      const timestamp = Date.now();
+      setScreenPulse({ source, timestamp });
+      syncToFirebase({ screenPulse: { source, timestamp } });
+    }
+  }, [screenId, syncToFirebase]);
+
+  showControlCommandRef.current = applyShowControlCommand;
+
+  useEffect(() => {
+    showControlRef.current = createShowControlClient({
+      module: 'interaction',
+      clientId: showControlClientIdRef.current,
+      role: isMaster ? 'master' : isOverview ? 'overview' : 'screen',
+      capabilities: ['module.statePatch', 'control.command', 'interaction.topology', 'interaction.pulse'],
+      onStatus: setShowControlStatus,
+      onCommand: (command) => showControlCommandRef.current(command),
+    });
+
+    return () => showControlRef.current?.close();
+  }, []);
+
+  useEffect(() => {
+    showControlRef.current?.publishState({
+      status: 'online',
+      screenTopology: SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
+      screenId,
+      role: isMaster ? 'master' : 'screen',
+      overview: isOverview,
+      mode,
+      intensity,
+      treeGrowth,
+      gestureActive,
+      lastInteraction: interactionPoint
+        ? { x: interactionPoint.x, y: interactionPoint.y, z: interactionPoint.z, timestamp: Date.now() }
+        : null,
+      screenPulse,
+      audioStarted: isStarted,
+      firebaseStatus: connectionStatus,
+    });
+  }, [
+    connectionStatus,
+    gestureActive,
+    interactionPoint,
+    intensity,
+    isMaster,
+    isOverview,
+    isStarted,
+    mode,
+    screenId,
+    screenPulse,
+    treeGrowth,
+  ]);
 
   return (
     <div
@@ -613,6 +695,11 @@ export default function App() {
       </AnimatePresence>
 
       <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none z-50">
+        <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
+          showControlStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-gray-900/50 border-white/5 text-white/30'
+        }`}>
+          Show API / 总控: {showControlStatus}
+        </div>
         <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
           isCameraActive ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-gray-900/50 border-white/5 text-white/20'
         }`}>
