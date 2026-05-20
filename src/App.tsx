@@ -186,6 +186,7 @@ export default function App() {
   const gestureProgressRef = useRef(0);
   const gestureCompletedRef = useRef(false);
   const gestureRoundLockedRef = useRef(false);
+  const gestureNeedsReleaseRef = useRef(false);
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
   const standbyPromptTimeoutRef = useRef<number | null>(null);
@@ -252,6 +253,7 @@ export default function App() {
           gestureProgressRef.current = 0;
           gestureCompletedRef.current = false;
           gestureRoundLockedRef.current = false;
+          gestureNeedsReleaseRef.current = false;
           treeGrowthRef.current = 0;
           treeTriggeredRef.current = false;
           treeCompletedAtRef.current = null;
@@ -332,6 +334,7 @@ export default function App() {
     gestureProgressRef.current = 0;
     gestureCompletedRef.current = false;
     gestureRoundLockedRef.current = true;
+    gestureNeedsReleaseRef.current = false;
     setGestureProgress(0);
     setShowGestureProgress(false);
     setGestureStartPending(false);
@@ -366,16 +369,20 @@ export default function App() {
     setAudioData(getAudioData());
 
     const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
+    if (gestureNeedsReleaseRef.current && !handGestureActive) {
+      gestureNeedsReleaseRef.current = false;
+    }
+    const handGestureEligible = handGestureActive && !gestureNeedsReleaseRef.current;
     if (!treeTriggeredRef.current && !gestureCompletedRef.current && !gestureRoundLockedRef.current) {
-      const direction = handGestureActive ? 1 : -1;
-      const duration = handGestureActive ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
+      const direction = handGestureEligible ? 1 : -1;
+      const duration = handGestureEligible ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
       const nextProgress = THREE.MathUtils.clamp(
         gestureProgressRef.current + direction * (deltaMs / duration),
         0,
         1
       );
 
-      if (handGestureActive || nextProgress > 0) {
+      if (handGestureEligible || nextProgress > 0) {
         setShowGestureProgress(true);
       } else if (gestureProgressRef.current > 0) {
         setShowGestureProgress(false);
@@ -420,6 +427,7 @@ export default function App() {
           setTreeTriggered(false);
           setGestureActive(false);
           setGestureRoundLocked(false);
+          gestureNeedsReleaseRef.current = handGestureActive;
           setMode('idle');
           scheduleStandbyPrompt();
           syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
@@ -508,6 +516,7 @@ export default function App() {
     gestureProgressRef.current = 0;
     gestureCompletedRef.current = false;
     gestureRoundLockedRef.current = false;
+    gestureNeedsReleaseRef.current = false;
     treeGrowthRef.current = 0;
     treeTriggeredRef.current = false;
     treeCompletedAtRef.current = null;
@@ -607,8 +616,7 @@ export default function App() {
     !showGestureProgress &&
     !gestureStartPending &&
     !gestureRoundLocked &&
-    standbyPromptReady &&
-    !handGestureActive;
+    standbyPromptReady;
 
   return (
     <div
