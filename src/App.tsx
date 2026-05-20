@@ -166,6 +166,7 @@ export default function App() {
   const [gestureProgress, setGestureProgress] = useState(0);
   const [showGestureProgress, setShowGestureProgress] = useState(false);
   const [gestureStartPending, setGestureStartPending] = useState(false);
+  const [gestureRoundLocked, setGestureRoundLocked] = useState(false);
   const [standbyPromptReady, setStandbyPromptReady] = useState(true);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
@@ -180,6 +181,7 @@ export default function App() {
   const treeFadingRef = useRef(false);
   const gestureProgressRef = useRef(0);
   const gestureCompletedRef = useRef(false);
+  const gestureRoundLockedRef = useRef(false);
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
   const standbyPromptTimeoutRef = useRef<number | null>(null);
@@ -233,6 +235,7 @@ export default function App() {
           staleTreeResetRef.current = true;
           gestureProgressRef.current = 0;
           gestureCompletedRef.current = false;
+          gestureRoundLockedRef.current = false;
           treeGrowthRef.current = 0;
           treeTriggeredRef.current = false;
           treeCompletedAtRef.current = null;
@@ -246,6 +249,7 @@ export default function App() {
           setGestureProgress(0);
           setShowGestureProgress(false);
           setGestureStartPending(false);
+          setGestureRoundLocked(false);
           setStandbyPromptReady(true);
           setIntensity(0.08);
           setMusicEvolution(0);
@@ -305,9 +309,11 @@ export default function App() {
     const treeBasePoint = getScreenWorldPoint('F1');
     gestureProgressRef.current = 0;
     gestureCompletedRef.current = false;
+    gestureRoundLockedRef.current = true;
     setGestureProgress(0);
     setShowGestureProgress(false);
     setGestureStartPending(false);
+    setGestureRoundLocked(true);
     treeCompletedAtRef.current = null;
     treeBrightAtRef.current = null;
     treeFadingRef.current = false;
@@ -335,7 +341,7 @@ export default function App() {
     setAudioData(getAudioData());
 
     const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-    if (!treeTriggeredRef.current && !gestureCompletedRef.current) {
+    if (!treeTriggeredRef.current && !gestureCompletedRef.current && !gestureRoundLockedRef.current) {
       const direction = handGestureActive ? 1 : -1;
       const duration = handGestureActive ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
       const nextProgress = THREE.MathUtils.clamp(
@@ -357,7 +363,9 @@ export default function App() {
 
       if (nextProgress >= 1) {
         gestureCompletedRef.current = true;
+        gestureRoundLockedRef.current = true;
         setGestureStartPending(true);
+        setGestureRoundLocked(true);
         setShowGestureProgress(false);
         if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
         gestureStartTimeoutRef.current = window.setTimeout(() => {
@@ -384,6 +392,7 @@ export default function App() {
           setMusicEvolution(0);
           setTreeTriggered(false);
           setGestureActive(false);
+          setGestureRoundLocked(false);
           setMode('idle');
           scheduleStandbyPrompt();
           syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
@@ -464,6 +473,7 @@ export default function App() {
     }
     gestureProgressRef.current = 0;
     gestureCompletedRef.current = false;
+    gestureRoundLockedRef.current = false;
     treeGrowthRef.current = 0;
     treeTriggeredRef.current = false;
     treeCompletedAtRef.current = null;
@@ -477,6 +487,7 @@ export default function App() {
     setGestureProgress(0);
     setShowGestureProgress(false);
     setGestureStartPending(false);
+    setGestureRoundLocked(false);
     setStandbyPromptReady(true);
     setIntensity(0.08);
     setMusicEvolution(0);
@@ -559,6 +570,7 @@ export default function App() {
     gestureProgress <= 0 &&
     !showGestureProgress &&
     !gestureStartPending &&
+    !gestureRoundLocked &&
     standbyPromptReady &&
     !handGestureActive;
 
