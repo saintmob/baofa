@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { ParticleScene } from './components/Visuals/ParticleScene';
-import * as Tone from 'tone';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
@@ -153,7 +152,17 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
 }
 
 export default function App() {
-  const { isStarted, startAudio, triggerNote, setMusicEvolution, evolution, getAudioData } = useAudio();
+  const {
+    isStarted,
+    startAudio,
+    addRandomLayer,
+    fadeToSingleLayer,
+    updateTreeLayers,
+    stopAllLayers,
+    setMusicEvolution,
+    evolution,
+    getAudioData
+  } = useAudio();
   const { isHandOpen, openHandCount, hasHandDetected, isCameraActive, cameraError, startCamera, stopCamera } = useHandTracking();
   const [audioData, setAudioData] = useState(new Float32Array(1024));
   const [interactionPoint, setInteractionPoint] = useState<THREE.Vector3 | null>(null);
@@ -276,6 +285,7 @@ export default function App() {
           setStandbyPromptReady(true);
           setIntensity(0.08);
           setMusicEvolution(0);
+          stopAllLayers();
           setMode('idle');
           syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
           return;
@@ -300,7 +310,6 @@ export default function App() {
       if (data.lastInteraction && data.lastInteraction.timestamp > lastSyncTimeRef.current) {
         lastSyncTimeRef.current = data.lastInteraction.timestamp;
         setInteractionPoint(new THREE.Vector3(data.lastInteraction.x, data.lastInteraction.y, data.lastInteraction.z));
-        triggerNote('C3');
       }
       if (data.screenPulse && typeof data.screenPulse.timestamp === 'number') {
         const source = isKnownScreenId(data.screenPulse.source) ? data.screenPulse.source : DEFAULT_SCREEN_ID;
@@ -311,7 +320,7 @@ export default function App() {
     });
 
     return () => unsub();
-  }, [checkConnection, setMusicEvolution, triggerNote]);
+  }, [checkConnection, setMusicEvolution, stopAllLayers]);
 
   const syncToFirebase = useCallback(async (updates: any) => {
     if (!db) return;
@@ -395,6 +404,9 @@ export default function App() {
       if (Math.abs(nextProgress - gestureProgressRef.current) > 0.001 || nextProgress === 0 || nextProgress === 1) {
         gestureProgressRef.current = nextProgress;
         setGestureProgress(nextProgress);
+        if (nextProgress > 0) {
+          fadeToSingleLayer(nextProgress);
+        }
       }
 
       if (nextProgress >= 1) {
@@ -417,6 +429,7 @@ export default function App() {
         intensityRef.current = Math.max(0.08, intensityRef.current - deltaMs / TREE_FADE_MS);
         evolutionRef.current = Math.max(0, evolutionRef.current - deltaMs / TREE_FADE_MS);
         setMusicEvolution(evolutionRef.current);
+        updateTreeLayers(treeGrowthRef.current, evolutionRef.current, true);
         if (treeGrowthRef.current <= 0.001) {
           treeGrowthRef.current = 0;
           treeTriggeredRef.current = false;
@@ -428,6 +441,7 @@ export default function App() {
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setMusicEvolution(0);
+          stopAllLayers();
           setTreeTriggered(false);
           setGestureActive(false);
           gestureRoundLockedRef.current = false;
@@ -446,6 +460,7 @@ export default function App() {
           intensityRef.current = Math.min(1, intensityRef.current + 0.01);
           evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
           setMusicEvolution(evolutionRef.current);
+          updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
 
           const completedElapsed = Date.now() - treeCompletedAtRef.current;
           if (
@@ -463,6 +478,7 @@ export default function App() {
           }
         } else {
           treePhaseRef.current = 'growing';
+          updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
         }
       }
       setTreeGrowth(treeGrowthRef.current);
@@ -476,7 +492,7 @@ export default function App() {
     }
 
     requestRef.current = requestAnimationFrame(animate);
-  }, [getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, startGestureGrowth, syncToFirebase]);
+  }, [fadeToSingleLayer, getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, setMusicEvolution, startGestureGrowth, stopAllLayers, syncToFirebase, updateTreeLayers]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
@@ -548,6 +564,7 @@ export default function App() {
     setStandbyPromptReady(true);
     setIntensity(0.08);
     setMusicEvolution(0);
+    stopAllLayers();
     setMode('idle');
     syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
   };
@@ -573,7 +590,6 @@ export default function App() {
     }
 
     if (!isStarted) await startAudio();
-    await Tone.start();
 
     const sourceScreen = isOverview ? getScreenFromPointer(e.clientX, e.clientY, rect, screenId) : screenId;
     const point = treeTriggeredRef.current
@@ -584,8 +600,7 @@ export default function App() {
         ).multiplyScalar(14)
       : getScreenWorldPoint(sourceScreen);
 
-    const notes = ['D4', 'E4', 'F#4', 'A4', 'B4'];
-    triggerNote(notes[Math.floor(Math.random() * notes.length)]);
+    await addRandomLayer();
     setInteractionPoint(point);
     setMode('interaction');
     setScreenPulse({ source: sourceScreen, timestamp: Date.now() });
