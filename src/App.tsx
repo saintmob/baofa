@@ -426,6 +426,7 @@ export default function App() {
           setMusicEvolution(0);
           setTreeTriggered(false);
           setGestureActive(false);
+          gestureRoundLockedRef.current = false;
           setGestureRoundLocked(false);
           gestureNeedsReleaseRef.current = handGestureActive;
           setMode('idle');
@@ -476,10 +477,15 @@ export default function App() {
     requestRef.current = requestAnimationFrame(animate);
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
+  }, [animate]);
+
+  useEffect(() => {
+    return () => {
       if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
       if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
     };
-  }, [animate]);
+  }, []);
 
   useEffect(() => {
     if (!treeTriggered || !treeControllerRef.current) return;
