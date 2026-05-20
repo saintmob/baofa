@@ -9,6 +9,7 @@ import * as Tone from 'tone';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
+import { BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, RotateCcw } from 'lucide-react';
 import {
@@ -626,6 +627,17 @@ export default function App() {
                     {screen.id}
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-3 rounded border border-white/10 bg-white/[0.025] px-3 py-2 text-[9px] font-mono uppercase tracking-[0.16em] text-white/50">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Native baofa / 原生屏</span>
+                  <span className="text-cyan-200/70">{BAOFA_NATIVE_URL}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-3">
+                  <span>VJ external / 外部 VJ</span>
+                  <span className="text-cyan-200/70 break-all">{getVjScreenUrl(isMaster ? 'MASTER' : isOverview ? DEFAULT_SCREEN_ID : screenId)}</span>
+                </div>
               </div>
 
               <div className="mt-4 flex justify-end">

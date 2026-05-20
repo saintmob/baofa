@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { APP_PORT } from './src/lib/runtimeConfig';
 
 /**
  * Adds a browser-side guard for Google AI Studio Build preview sessions.
@@ -133,10 +134,10 @@ export default defineConfig(({ mode }) => {
 
     server: {
       host: '0.0.0.0',
-      port: 3000,
+      port: APP_PORT,
       strictPort: true,
-
-      ...(disableHmr ? { hmr: false } : {}),
+      hmr: false,
+      ws: false,
 
       ...(enableAiStudioNoAutoreloadGuard
         ? {
