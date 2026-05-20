@@ -3,6 +3,7 @@ import { useAudio } from './hooks/useAudio';
 import { useHandTracking } from './hooks/useHandTracking';
 import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as Tone from 'tone';
 import * as THREE from 'three';
@@ -569,7 +570,7 @@ export default function App() {
       onPointerUp={handleSplashPointerUp}
     >
       <div className="absolute inset-0 z-0 pointer-events-none">
-        <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={0.75} gl={{ antialias: false, powerPreference: 'low-power' }}>
+        <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
           <ambientLight intensity={0.45} />
           <ParticleScene
             audioData={audioData}
@@ -585,6 +586,13 @@ export default function App() {
             isPaused={false}
           />
           {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
+          <EffectComposer>
+            <Bloom
+              intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
+              luminanceThreshold={isOverview ? 0.28 : 0.08}
+              luminanceSmoothing={0.9}
+            />
+          </EffectComposer>
         </Canvas>
       </div>
 

@@ -83,13 +83,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const squareFieldRef = useRef<THREE.InstancedMesh>(null);
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
-  const count = 12000;
-  const leafCount = 6500;
-  const mistCount = 14000;
-  const energyCount = 1800;
-  const pollenCount = 2400;
-  const glyphCount = 520;
-  const shardCount = 28;
+  const count = 34000;
+  const leafCount = 19000;
+  const mistCount = 76000;
+  const energyCount = 6200;
+  const pollenCount = 9800;
+  const glyphCount = 1900;
+  const shardCount = 90;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
   const squareMatrixObject = useMemo(() => new THREE.Object3D(), []);
@@ -415,7 +415,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, []);
 
   const [fiberPositions, fiberOrder, fiberColors] = useMemo(() => {
-    const segmentCount = 5200;
+    const segmentCount = 19000;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
     const colors = new Float32Array(segmentCount * 2 * 3);
@@ -570,7 +570,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, []);
 
   const [rootFiberPositions, rootFiberOrder, rootFiberColors] = useMemo(() => {
-    const segmentCount = 2400;
+    const segmentCount = 9000;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
     const colors = new Float32Array(segmentCount * 2 * 3);
