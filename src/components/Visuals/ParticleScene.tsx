@@ -87,17 +87,21 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
   const isOptimized = performanceProfile === 'optimized';
-  const count = isOptimized ? 22000 : 34000;
-  const leafCount = isOptimized ? 11000 : 19000;
-  const mistCount = isOptimized ? 36000 : 76000;
-  const energyCount = isOptimized ? 3600 : 6200;
-  const pollenCount = isOptimized ? 5200 : 9800;
-  const glyphCount = isOptimized ? 900 : 1900;
-  const idleBlockCount = isOptimized ? 1400 : 2600;
-  const shardCount = isOptimized ? 45 : 90;
-  const squaresPerScreen = isOptimized ? 42 : 72;
-  const fiberSegmentCount = isOptimized ? 9000 : 19000;
-  const rootFiberSegmentCount = isOptimized ? 4200 : 9000;
+  const count = 34000;
+  const leafCount = 19000;
+  const mistCount = 76000;
+  const energyCount = 6200;
+  const pollenCount = 9800;
+  const glyphCount = 1900;
+  const idleBlockCount = 2600;
+  const shardCount = 90;
+  const squaresPerScreen = 72;
+  const fiberSegmentCount = 19000;
+  const rootFiberSegmentCount = 9000;
+  const densityScale = isOptimized ? 0.58 : 1;
+  const mistDensityScale = isOptimized ? 0.46 : 1;
+  const lineDensityScale = isOptimized ? 0.48 : 1;
+  const cpuUpdateScale = isOptimized ? 0.62 : 1;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
   const squareMatrixObject = useMemo(() => new THREE.Object3D(), []);
@@ -819,7 +823,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         const leafMat = leafRef.current.material as THREE.PointsMaterial;
         leafMat.opacity = Math.min(0.98, opacityRef.current * (0.5 + visibleGrowth * 0.58 + bloomPhase * 0.32)) * previewBrightness;
         leafMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase * 0.82);
-        leafRef.current.geometry.setDrawRange(0, Math.floor(leafCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
+        leafRef.current.geometry.setDrawRange(0, Math.floor(leafCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity * densityScale));
       }
 
       if (mistRef.current) {
@@ -827,7 +831,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25) * (isOverviewScreen ? 0.58 : 1);
         mistMat.size = (0.05 + Math.max(idleMist, interactionPreview) * 0.07 + intensity * 0.06) * (isOverviewScreen ? 0.74 : 1);
         mistMat.color.copy(tempoColor);
-        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1)));
+        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1) * mistDensityScale));
       }
 
       if (energyRef.current) {
@@ -835,7 +839,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         energyMat.opacity = Math.min(1, 0.24 + intensity * 0.9 + bloomPhase * 0.34 + (gestureActive ? 0.25 : 0)) * previewBrightness;
         energyMat.size = (0.035 + intensity * 0.08 + bloomPhase * 0.045 + (gestureActive ? 0.03 : 0)) * (isOverviewScreen ? 0.72 : 1);
         energyMat.color.copy(bloomColor);
-        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
+        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity * densityScale));
       }
 
       if (pollenRef.current) {
@@ -843,7 +847,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         pollenMat.opacity = Math.min(0.9, 0.08 + visibleGrowth * 0.58 + intensity * 0.16 + bloomPhase * 0.28) * (isOverviewScreen ? 0.3 : 1);
         pollenMat.size = (0.06 + intensity * 0.065 + bloomPhase * 0.035) * (isOverviewScreen ? 0.58 : 1);
         pollenMat.color.copy(bloomColor);
-        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * Math.min(1, visibleGrowth * particleSurge) * (isOverviewScreen ? 0.28 : 1)));
+        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * Math.min(1, visibleGrowth * particleSurge) * (isOverviewScreen ? 0.28 : 1) * densityScale));
       }
 
       if (glyphRef.current) {
@@ -851,35 +855,35 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         glyphMat.opacity = Math.min(0.24, 0.025 + visibleGrowth * 0.09 + bloomPhase * 0.09) * (isOverviewScreen ? 0.5 : 1);
         glyphMat.size = 0.042 + intensity * 0.045 + bloomPhase * 0.026;
         glyphMat.color.copy(bloomColor);
-        glyphRef.current.geometry.setDrawRange(0, Math.floor(glyphCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
+        glyphRef.current.geometry.setDrawRange(0, Math.floor(glyphCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity * densityScale));
       }
 
       if (branchLineRef.current) {
         const branchMat = branchLineRef.current.material as THREE.LineBasicMaterial;
         branchMat.color.copy(bloomColor);
         branchMat.opacity = Math.min(0.58, visibleGrowth * 0.22 + intensity * 0.06 + bloomPhase * 0.32) * previewBrightness;
-        branchLineRef.current.geometry.setDrawRange(0, Math.floor((branchLinePositions.length / 3) * visibleGrowth * previewDensity));
+        branchLineRef.current.geometry.setDrawRange(0, Math.floor((branchLinePositions.length / 3) * visibleGrowth * previewDensity * lineDensityScale));
       }
 
       if (contourRef.current) {
         const contourMat = contourRef.current.material as THREE.LineBasicMaterial;
         contourMat.color.copy(bloomColor);
         contourMat.opacity = Math.min(0.28, visibleGrowth * 0.08 + intensity * 0.025 + bloomPhase * 0.17) * previewBrightness;
-        contourRef.current.geometry.setDrawRange(0, Math.floor((contourPositions.length / 3) * visibleGrowth * previewDensity));
+        contourRef.current.geometry.setDrawRange(0, Math.floor((contourPositions.length / 3) * visibleGrowth * previewDensity * lineDensityScale));
       }
 
       if (fiberRef.current) {
         const fiberMat = fiberRef.current.material as THREE.LineBasicMaterial;
         fiberMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase);
         fiberMat.opacity = visibleGrowth > 0.001 ? Math.min(0.98, 0.2 + visibleGrowth * 0.48 + intensity * 0.2 + bloomPhase * 0.24) * (isOverviewScreen ? 0.38 : 1) : 0;
-        fiberRef.current.geometry.setDrawRange(0, Math.floor((fiberPositions.length / 3) * visibleGrowth * previewDensity));
+        fiberRef.current.geometry.setDrawRange(0, Math.floor((fiberPositions.length / 3) * visibleGrowth * previewDensity * lineDensityScale));
       }
 
       if (rootFiberRef.current) {
         const rootMat = rootFiberRef.current.material as THREE.LineBasicMaterial;
         rootMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase);
         rootMat.opacity = visibleGrowth > 0.001 ? Math.min(0.88, 0.16 + visibleGrowth * 0.44 + intensity * 0.14 + bloomPhase * 0.22) * (isOverviewScreen ? 0.38 : 1) : 0;
-        rootFiberRef.current.geometry.setDrawRange(0, Math.floor((rootFiberPositions.length / 3) * visibleGrowth * previewDensity));
+        rootFiberRef.current.geometry.setDrawRange(0, Math.floor((rootFiberPositions.length / 3) * visibleGrowth * previewDensity * lineDensityScale));
       }
 
       if (meshRef.current) {
@@ -899,12 +903,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       const posAttr = pointsRef.current.geometry.attributes.position;
       const mat = pointsRef.current.material as THREE.PointsMaterial;
 
-      const activeCount = visibleGrowth > 0.001 ? Math.floor(count * Math.min(1, renderGrowth * particleSurge) * previewDensity) : 0;
+      const activeCount = visibleGrowth > 0.001 ? Math.floor(count * Math.min(1, renderGrowth * particleSurge) * previewDensity * densityScale) : 0;
       pointsRef.current.geometry.setDrawRange(0, Math.max(0, activeCount));
 
       mat.size = (0.018 + (intensity * 0.055) + bloomPhase * 0.025 + (gestureActive ? 0.025 : 0)) * (isOverviewScreen ? 0.72 : 1);
 
-      for (let i = 0; i < count; i++) {
+      const updateCount = Math.max(0, Math.min(count, Math.ceil(activeCount || count * cpuUpdateScale)));
+      for (let i = 0; i < updateCount; i++) {
         const ix = i * 3;
         const iy = i * 3 + 1;
         const iz = i * 3 + 2;
@@ -975,10 +980,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     if (squareFieldRef.current) {
       const mesh = squareFieldRef.current;
       const material = mesh.material as THREE.MeshBasicMaterial;
+      const squareLimit = isOptimized ? Math.floor(squareData.length * 0.58) : squareData.length;
+      mesh.count = squareLimit;
       material.color.copy(tempoColor);
       material.opacity = Math.min(0.95, 0.34 + intensity * 0.22 + bloomPhase * 0.22);
 
-      squareData.forEach((data, i) => {
+      for (let i = 0; i < squareLimit; i++) {
+        const data = squareData[i];
         let pulse = 0;
 
         if (mode === 'interaction' && visibleGrowth <= 0.001 && sourceLayout) {
@@ -1004,7 +1012,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25));
         squareMatrixObject.updateMatrix();
         mesh.setMatrixAt(i, squareMatrixObject.matrix);
-      });
+      }
       mesh.instanceMatrix.needsUpdate = true;
     }
 
@@ -1026,10 +1034,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         .lerp(new THREE.Color("#ecfeff"), groupIndex === 0 ? 0.18 : 0.06);
       material.opacity = (0.38 + intensity * 0.1) * idlePresence * (isOverviewScreen ? 0.44 : 1);
       material.visible = material.opacity > 0.001;
+      mesh.count = isOptimized ? Math.ceil((idleBlockData.length / 5) * 0.58) : Math.ceil(idleBlockData.length / 5);
 
       let instanceIndex = 0;
       idleBlockData.forEach((data) => {
         if (data.colorGroup !== groupIndex) return;
+        if (instanceIndex >= mesh.count) return;
         const pulse = 0.9 + Math.sin(time * (1.15 + data.speed) + data.phase) * 0.22 + interactionBoost * 0.14;
         squareMatrixObject.position.set(
           data.position.x + Math.sin(time * data.speed + data.phase) * data.drift.x,
@@ -1051,7 +1061,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     if (energyRef.current) {
       const posAttr = energyRef.current.geometry.attributes.position;
-      for (let i = 0; i < energyCount; i++) {
+      const updateCount = isOptimized ? Math.floor(energyCount * cpuUpdateScale) : energyCount;
+      for (let i = 0; i < updateCount; i++) {
         const ix = i * 3;
         const t = energyOrder[i];
         const wave = Math.sin(time * (1.6 + intensity) + t * 34 + (i % 9)) * (0.12 + intensity * 0.3);
@@ -1074,7 +1085,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     if (pollenRef.current) {
       const posAttr = pollenRef.current.geometry.attributes.position;
-      for (let i = 0; i < pollenCount; i++) {
+      const updateCount = isOptimized ? Math.floor(pollenCount * cpuUpdateScale) : pollenCount;
+      for (let i = 0; i < updateCount; i++) {
         const ix = i * 3;
         const float = 0.004 + pollenOrder[i] * 0.006;
         posAttr.array[ix] += Math.sin(time * 0.8 + i) * float;
@@ -1085,7 +1097,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     if (glyphRef.current) {
       const posAttr = glyphRef.current.geometry.attributes.position;
-      for (let i = 0; i < glyphCount; i++) {
+      const updateCount = isOptimized ? Math.floor(glyphCount * cpuUpdateScale) : glyphCount;
+      for (let i = 0; i < updateCount; i++) {
         const ix = i * 3;
         const shimmer = 0.003 + glyphOrder[i] * 0.004;
         posAttr.array[ix] += Math.sin(time * 0.9 + glyphOrder[i] * 31) * shimmer;
