@@ -5,6 +5,11 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { ParticleScene } from './components/Visuals/ParticleScene';
+import {
+  WebGPUProjectRenderer,
+  type ProjectRenderMode,
+  type ProjectRenderStats,
+} from './components/ProjectPerformanceRenderer';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
@@ -100,6 +105,40 @@ type WebGLStats = {
 };
 
 type TreePhase = 'idle' | 'growing' | 'bright' | 'fading';
+const RENDER_MODE_META: Record<ProjectRenderMode, {
+  label: string;
+  api: string;
+  physics: string;
+  render: string;
+  transfer: string;
+}> = {
+  canvas2d: {
+    label: 'Canvas 2D',
+    api: 'CanvasRenderingContext2D',
+    physics: 'Not applicable to this Three.js scene',
+    render: 'Unavailable for identical scene',
+    transfer: 'No comparable sample',
+  },
+  webgl: {
+    label: 'WebGL',
+    api: 'WebGLRenderer / Three.js',
+    physics: 'CPU + GPU pipeline',
+    render: 'Original project scene',
+    transfer: 'Three.js buffers',
+  },
+  webgpu: {
+    label: 'WebGPU',
+    api: 'GPUCanvasContext',
+    physics: 'Three.js WebGPU backend',
+    render: 'Original project scene',
+    transfer: 'Three.js WebGPU renderer',
+  },
+};
+
+function getInitialRenderMode(): ProjectRenderMode {
+  const saved = localStorage.getItem('baofa-render-mode');
+  return saved === 'canvas2d' || saved === 'webgl' || saved === 'webgpu' ? saved : 'webgl';
+}
 
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
   const { gl, size } = useThree();
@@ -185,6 +224,8 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
+  const [renderMode, setRenderMode] = useState<ProjectRenderMode>(getInitialRenderMode);
+  const [projectStats, setProjectStats] = useState<ProjectRenderStats>({ fps: 0, frameMs: 0 });
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -214,6 +255,16 @@ export default function App() {
       stopAllLayers();
     }
   }, [stopAllLayers, useSampleLibrary]);
+
+  useEffect(() => {
+    localStorage.setItem('baofa-render-mode', renderMode);
+    setProjectStats(
+      renderMode === 'canvas2d'
+        ? { fps: 0, frameMs: 0, status: 'unsupported', note: 'Canvas 2D cannot render the original Three.js scene' }
+        : { fps: 0, frameMs: 0 }
+    );
+    setWebglStats(null);
+  }, [renderMode]);
 
   const checkConnection = useCallback(async () => {
     if (!db) {
@@ -656,12 +707,19 @@ export default function App() {
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
   const showStandbyPrompt =
+    renderMode !== 'canvas2d' &&
     treeGrowth <= 0 &&
     gestureProgress <= 0 &&
     !showGestureProgress &&
     !gestureStartPending &&
     !gestureRoundLocked &&
     standbyPromptReady;
+  const activeRenderStats =
+    renderMode === 'webgl' && webglStats
+      ? { fps: webglStats.fps, frameMs: webglStats.frameMs, status: 'running' as const }
+      : projectStats;
+  const renderModeMeta = RENDER_MODE_META[renderMode];
+  const activeScreenId = isOverview ? 'OVERVIEW' : isMaster ? 'MASTER' : screenId;
 
   return (
     <div
@@ -671,30 +729,61 @@ export default function App() {
       onPointerUp={handleSplashPointerUp}
     >
       <div className="absolute inset-0 z-0 pointer-events-none">
-        <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
-          <ambientLight intensity={0.45} />
-          <ParticleScene
+        {renderMode === 'webgl' ? (
+          <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
+            <ambientLight intensity={0.45} />
+            <ParticleScene
+              audioData={audioData}
+              interactionPoint={interactionPoint}
+              mode={evolution > 0.8 ? 'climax' : mode}
+              intensity={intensity}
+              screenId={activeScreenId}
+              treeGrowth={treeGrowth}
+              gestureActive={gestureActive}
+              pulseSource={screenPulse?.source}
+              pulseTime={screenPulse?.timestamp}
+              isStarted={treeGrowth > 0 || mode === 'interaction'}
+              isPaused={false}
+            />
+            {(showWebGLDebug || renderMode === 'webgl') && <WebGLDebugProbe onStats={setWebglStats} />}
+            <EffectComposer>
+              <Bloom
+                intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
+                luminanceThreshold={isOverview ? 0.28 : 0.08}
+                luminanceSmoothing={0.9}
+              />
+            </EffectComposer>
+          </Canvas>
+        ) : renderMode === 'canvas2d' ? (
+          <div className="absolute inset-0 bg-[#02040a]">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.08),transparent_34%)]" />
+            <div className="absolute inset-0 flex items-center justify-center px-6">
+              <div className="max-w-[520px] rounded border border-white/10 bg-[#111827]/88 px-6 py-5 text-center text-sm leading-relaxed text-white/72 backdrop-blur-xl">
+                <div className="text-base font-semibold text-white/85">Canvas 2D 不能直接渲染当前原项目场景</div>
+                <div className="mt-2">
+                  当前画面由 Three.js 的 3D 场景、Points、Lines、InstancedMesh 和后处理组成。Canvas 2D 需要重写一套 2D 复刻版，画面和性能都不能与原场景直接对比。
+                </div>
+                <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-cyan-200/65">
+                  请使用 WebGL / WebGPU 对比同一原项目场景
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <WebGPUProjectRenderer
             audioData={audioData}
             interactionPoint={interactionPoint}
             mode={evolution > 0.8 ? 'climax' : mode}
             intensity={intensity}
-            screenId={isOverview ? 'OVERVIEW' : isMaster ? 'MASTER' : screenId}
+            screenId={activeScreenId}
             treeGrowth={treeGrowth}
             gestureActive={gestureActive}
             pulseSource={screenPulse?.source}
             pulseTime={screenPulse?.timestamp}
             isStarted={treeGrowth > 0 || mode === 'interaction'}
-            isPaused={false}
+            onStats={setProjectStats}
           />
-          {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
-          <EffectComposer>
-            <Bloom
-              intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
-              luminanceThreshold={isOverview ? 0.28 : 0.08}
-              luminanceSmoothing={0.9}
-            />
-          </EffectComposer>
-        </Canvas>
+        )}
       </div>
 
       {isOverview && (
@@ -756,6 +845,27 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <div
+          className="absolute left-1/2 top-6 flex w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 flex-col items-center gap-3 pointer-events-auto"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="grid w-[min(410px,100%)] grid-cols-3 rounded-lg border border-white/10 bg-black/45 p-1 backdrop-blur-xl">
+            {(['canvas2d', 'webgl', 'webgpu'] as ProjectRenderMode[]).map((item) => (
+              <button
+                key={item}
+                onClick={() => setRenderMode(item)}
+                className={`h-10 rounded-md text-sm font-semibold transition ${
+                  renderMode === item
+                    ? 'bg-[#1767ff] text-white shadow-[0_0_18px_rgba(23,103,255,0.32)]'
+                    : 'text-white/45 hover:text-white/80'
+                }`}
+              >
+                {RENDER_MODE_META[item].label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
@@ -914,13 +1024,13 @@ export default function App() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
-            className="fixed bottom-6 left-6 z-50 w-[280px] max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/65 p-4 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 backdrop-blur-xl"
+            className="fixed bottom-6 left-6 z-50 w-[320px] max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/65 p-4 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 backdrop-blur-xl"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-amber-100/90">
                 <Activity size={14} />
-                <span>WebGL Debug / 调试</span>
+                <span>Render Debug / 调试</span>
               </div>
               <button
                 onClick={() => setShowWebGLDebug(false)}
@@ -930,21 +1040,40 @@ export default function App() {
               </button>
             </div>
 
-            {webglStats ? (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                <span>FPS</span><span className="text-right text-cyan-100">{webglStats.fps}</span>
-                <span>Frame</span><span className="text-right text-cyan-100">{webglStats.frameMs}ms</span>
-                <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
-                <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
-                <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
-                <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
-                <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
-                <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
-                <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
-                <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <span>Mode</span><span className="text-right text-cyan-100">{renderModeMeta.label}</span>
+              <span>FPS</span>
+              <span className="text-right text-cyan-100">
+                {activeRenderStats.status === 'unsupported' ? 'N/A' : activeRenderStats.fps}
+              </span>
+              <span>Frame</span>
+              <span className="text-right text-cyan-100">
+                {activeRenderStats.status === 'unsupported' ? 'N/A' : `${activeRenderStats.frameMs}ms`}
+              </span>
+              <span>API</span><span className="text-right text-cyan-100">{renderModeMeta.api}</span>
+              <span>Scene</span><span className="text-right text-cyan-100">{renderModeMeta.render}</span>
+              <span>Pipeline</span><span className="text-right text-cyan-100">{renderModeMeta.physics}</span>
+              {activeRenderStats.note && (
+                <>
+                  <span>Status</span><span className="text-right text-cyan-100 normal-case tracking-normal">{activeRenderStats.note}</span>
+                </>
+              )}
+            </div>
+
+            {renderMode === 'webgl' && webglStats && (
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <div className="mb-2 text-amber-100/75">WebGL Renderer</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
+                  <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
+                  <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
+                  <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
+                  <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
+                  <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
+                  <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
+                  <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
+                </div>
               </div>
-            ) : (
-              <div className="text-white/35">Collecting render stats / 正在采样</div>
             )}
           </motion.div>
         )}
