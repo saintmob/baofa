@@ -8,7 +8,7 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, RotateCcw } from 'lucide-react';
+import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, Music2, RotateCcw } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
@@ -153,15 +153,16 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
 
 export default function App() {
   const {
-    isStarted,
-    startAudio,
-    addRandomLayer,
+    addRandomSampleLayer,
+    triggerScaleNote,
     fadeToSingleLayer,
     updateTreeLayers,
     stopAllLayers,
     setMusicEvolution,
     evolution,
-    getAudioData
+    getAudioData,
+    useSampleLibrary,
+    setUseSampleLibrary
   } = useAudio();
   const { isHandOpen, openHandCount, hasHandDetected, isCameraActive, cameraError, startCamera, stopCamera } = useHandTracking();
   const [audioData, setAudioData] = useState(new Float32Array(1024));
@@ -205,6 +206,14 @@ export default function App() {
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
+  const useSampleLibraryRef = useRef(useSampleLibrary);
+
+  useEffect(() => {
+    useSampleLibraryRef.current = useSampleLibrary;
+    if (!useSampleLibrary) {
+      stopAllLayers();
+    }
+  }, [stopAllLayers, useSampleLibrary]);
 
   const checkConnection = useCallback(async () => {
     if (!db) {
@@ -589,8 +598,6 @@ export default function App() {
       scheduleStandbyPrompt(STANDBY_PROMPT_DELAY_MS, true);
     }
 
-    if (!isStarted) await startAudio();
-
     const sourceScreen = isOverview ? getScreenFromPointer(e.clientX, e.clientY, rect, screenId) : screenId;
     const point = treeTriggeredRef.current
       ? new THREE.Vector3(
@@ -600,7 +607,12 @@ export default function App() {
         ).multiplyScalar(14)
       : getScreenWorldPoint(sourceScreen);
 
-    await addRandomLayer();
+    if (useSampleLibraryRef.current) {
+      await addRandomSampleLayer();
+    } else {
+      stopAllLayers();
+      await triggerScaleNote();
+    }
     setInteractionPoint(point);
     setMode('interaction');
     setScreenPulse({ source: sourceScreen, timestamp: Date.now() });
@@ -766,6 +778,28 @@ export default function App() {
             title="WebGL debug"
           >
             <Activity size={18} />
+          </button>
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              const next = !useSampleLibraryRef.current;
+              useSampleLibraryRef.current = next;
+              setUseSampleLibrary(next);
+              if (!next) {
+                stopAllLayers();
+              }
+            }}
+            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
+              useSampleLibrary
+                ? 'border-emerald-300/45 bg-emerald-300/12 text-emerald-100'
+                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
+            }`}
+            title={useSampleLibrary ? 'Sample library sound on' : 'Scale note sound on'}
+            aria-pressed={useSampleLibrary}
+          >
+            <Music2 size={15} />
+            {useSampleLibrary ? 'Sample' : 'Scale'}
           </button>
 
           {isCameraActive && (

@@ -18,7 +18,9 @@ interface SoundLayer {
 
 const MAX_LAYERS = 7;
 const PROJECT_ID = 'baofa-sound-layers';
+const SAMPLE_LIBRARY_STORAGE_KEY = 'baofa-use-sample-library';
 const LIBRARY_SOUNDS = AVAILABLE_SOUNDS.filter((sound) => sound.category !== 'custom');
+const SCALE_NOTES = [293.66, 329.63, 369.99, 440, 493.88];
 
 function makeLayer(sound: SoundDef): SoundLayer {
   return {
@@ -48,12 +50,18 @@ function pickRandomSound(existing: SoundLayer[]) {
 
 export function useAudio() {
   const [isStarted, setIsStarted] = useState(false);
+  const [useSampleLibrary, setUseSampleLibraryState] = useState(() => {
+    const saved = localStorage.getItem(SAMPLE_LIBRARY_STORAGE_KEY);
+    return saved === null ? true : saved !== 'false';
+  });
   const [evolution, setEvolution] = useState(0);
+  const useSampleLibraryRef = useRef(useSampleLibrary);
   const layersRef = useRef<SoundLayer[]>([]);
   const phaseRef = useRef<LayerPhase>('idle');
   const analyserRef = useRef<AnalyserNode | null>(null);
   const analyserDataRef = useRef<Float32Array>(new Float32Array(1024));
   const analyserConnectedRef = useRef(false);
+  const scaleOutputRef = useRef<GainNode | null>(null);
   const frameRef = useRef<number | null>(null);
 
   const syncProject = useCallback(() => {
@@ -86,8 +94,18 @@ export function useAudio() {
       analyserRef.current = engineManager.ctx.createAnalyser();
       analyserRef.current.fftSize = 2048;
     }
-    syncProject();
-    engineManager.startProject(PROJECT_ID);
+    if (!scaleOutputRef.current && engineManager.ctx) {
+      scaleOutputRef.current = engineManager.ctx.createGain();
+      scaleOutputRef.current.gain.value = 0.72;
+      scaleOutputRef.current.connect(engineManager.ctx.destination);
+      if (analyserRef.current) {
+        scaleOutputRef.current.connect(analyserRef.current);
+      }
+    }
+    if (useSampleLibraryRef.current) {
+      syncProject();
+      engineManager.startProject(PROJECT_ID);
+    }
     setIsStarted(true);
   }, [syncProject]);
 
@@ -106,8 +124,53 @@ export function useAudio() {
     setIsStarted(false);
   }, []);
 
-  const addRandomLayer = useCallback(async () => {
+  const setUseSampleLibrary = useCallback((enabled: boolean) => {
+    useSampleLibraryRef.current = enabled;
+    setUseSampleLibraryState(enabled);
+    localStorage.setItem(SAMPLE_LIBRARY_STORAGE_KEY, String(enabled));
+    if (!enabled) {
+      stopAllLayers();
+    }
+  }, [stopAllLayers]);
+
+  const triggerScaleNote = useCallback(async () => {
     await ensureStarted();
+    const ctx = engineManager.ctx;
+    const output = scaleOutputRef.current;
+    if (!ctx || !output) return;
+
+    const frequency = SCALE_NOTES[Math.floor(Math.random() * SCALE_NOTES.length)];
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const shimmer = ctx.createOscillator();
+    const toneGain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc.type = 'sine';
+    shimmer.type = 'triangle';
+    osc.frequency.setValueAtTime(frequency, now);
+    shimmer.frequency.setValueAtTime(frequency * 2.01, now);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2800, now);
+    filter.frequency.exponentialRampToValueAtTime(900, now + 0.75);
+    toneGain.gain.setValueAtTime(0.0001, now);
+    toneGain.gain.exponentialRampToValueAtTime(0.22, now + 0.018);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+
+    osc.connect(filter);
+    shimmer.connect(filter);
+    filter.connect(toneGain);
+    toneGain.connect(output);
+
+    osc.start(now);
+    shimmer.start(now);
+    osc.stop(now + 0.9);
+    shimmer.stop(now + 0.9);
+  }, [ensureStarted]);
+
+  const addRandomSampleLayer = useCallback(async () => {
+    await ensureStarted();
+    if (!useSampleLibraryRef.current) return;
     phaseRef.current = 'click';
     const layers = layersRef.current.slice(0, MAX_LAYERS);
     const nextLayer = makeLayer(pickRandomSound(layers));
@@ -128,6 +191,7 @@ export function useAudio() {
   }, [ensureStarted, syncProject]);
 
   const fadeToSingleLayer = useCallback((progress: number) => {
+    if (!useSampleLibraryRef.current) return;
     if (!layersRef.current.length) return;
     phaseRef.current = 'gesture';
     const keepIndex = 0;
@@ -144,6 +208,7 @@ export function useAudio() {
   }, []);
 
   const updateTreeLayers = useCallback((growth: number, musicEvolution: number, isFading: boolean) => {
+    if (!useSampleLibraryRef.current) return;
     if (growth <= 0 && !layersRef.current.length) return;
     if (!engineManager.ctx) return;
     syncProject();
@@ -221,8 +286,11 @@ export function useAudio() {
 
   return {
     isStarted,
+    useSampleLibrary,
+    setUseSampleLibrary,
     startAudio: ensureStarted,
-    addRandomLayer,
+    addRandomSampleLayer,
+    triggerScaleNote,
     fadeToSingleLayer,
     updateTreeLayers,
     stopAllLayers,
