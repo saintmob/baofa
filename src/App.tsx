@@ -105,6 +105,7 @@ type WebGLStats = {
 };
 
 type TreePhase = 'idle' | 'growing' | 'bright' | 'fading';
+type WebGLPerformanceProfile = 'original' | 'optimized';
 const RENDER_MODE_META: Record<ProjectRenderMode, {
   label: string;
   api: string;
@@ -138,6 +139,10 @@ const RENDER_MODE_META: Record<ProjectRenderMode, {
 function getInitialRenderMode(): ProjectRenderMode {
   const saved = localStorage.getItem('baofa-render-mode');
   return saved === 'canvas2d' || saved === 'webgl' || saved === 'webgpu' ? saved : 'webgl';
+}
+
+function getInitialWebGLPerformanceProfile(): WebGLPerformanceProfile {
+  return localStorage.getItem('baofa-webgl-profile') === 'optimized' ? 'optimized' : 'original';
 }
 
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
@@ -226,6 +231,7 @@ export default function App() {
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
   const [renderMode, setRenderMode] = useState<ProjectRenderMode>(getInitialRenderMode);
   const [projectStats, setProjectStats] = useState<ProjectRenderStats>({ fps: 0, frameMs: 0 });
+  const [webglPerformanceProfile, setWebglPerformanceProfile] = useState<WebGLPerformanceProfile>(getInitialWebGLPerformanceProfile);
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -265,6 +271,11 @@ export default function App() {
     );
     setWebglStats(null);
   }, [renderMode]);
+
+  useEffect(() => {
+    localStorage.setItem('baofa-webgl-profile', webglPerformanceProfile);
+    setWebglStats(null);
+  }, [webglPerformanceProfile]);
 
   const checkConnection = useCallback(async () => {
     if (!db) {
@@ -744,15 +755,18 @@ export default function App() {
               pulseTime={screenPulse?.timestamp}
               isStarted={treeGrowth > 0 || mode === 'interaction'}
               isPaused={false}
+              performanceProfile={webglPerformanceProfile}
             />
             {(showWebGLDebug || renderMode === 'webgl') && <WebGLDebugProbe onStats={setWebglStats} />}
-            <EffectComposer>
-              <Bloom
-                intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
-                luminanceThreshold={isOverview ? 0.28 : 0.08}
-                luminanceSmoothing={0.9}
-              />
-            </EffectComposer>
+            {webglPerformanceProfile === 'original' && (
+              <EffectComposer>
+                <Bloom
+                  intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
+                  luminanceThreshold={isOverview ? 0.28 : 0.08}
+                  luminanceSmoothing={0.9}
+                />
+              </EffectComposer>
+            )}
           </Canvas>
         ) : renderMode === 'canvas2d' ? (
           <div className="absolute inset-0 bg-[#02040a]">
@@ -865,6 +879,19 @@ export default function App() {
               </button>
             ))}
           </div>
+          {renderMode === 'webgl' && (
+            <button
+              onClick={() => setWebglPerformanceProfile((value) => value === 'original' ? 'optimized' : 'original')}
+              className={`h-9 rounded-full border px-4 font-mono text-[10px] uppercase tracking-[0.18em] transition backdrop-blur-xl ${
+                webglPerformanceProfile === 'optimized'
+                  ? 'border-emerald-300/45 bg-emerald-300/14 text-emerald-100'
+                  : 'border-white/10 bg-black/40 text-white/55 hover:border-white/20 hover:text-white/80'
+              }`}
+              title="Toggle WebGL before/after optimization"
+            >
+              WebGL {webglPerformanceProfile === 'optimized' ? '优化后' : '优化前'}
+            </button>
+          )}
         </div>
 
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
@@ -1042,6 +1069,12 @@ export default function App() {
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-2">
               <span>Mode</span><span className="text-right text-cyan-100">{renderModeMeta.label}</span>
+              {renderMode === 'webgl' && (
+                <>
+                  <span>WebGL Profile</span>
+                  <span className="text-right text-cyan-100">{webglPerformanceProfile === 'optimized' ? '优化后' : '优化前'}</span>
+                </>
+              )}
               <span>FPS</span>
               <span className="text-right text-cyan-100">
                 {activeRenderStats.status === 'unsupported' ? 'N/A' : activeRenderStats.fps}

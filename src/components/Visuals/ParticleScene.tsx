@@ -20,6 +20,7 @@ interface ParticleSceneProps {
   pulseTime?: number;
   isStarted?: boolean;
   isPaused?: boolean;
+  performanceProfile?: 'original' | 'optimized';
 }
 
 function getScreenCenter(screenId = DEFAULT_SCREEN_ID) {
@@ -67,7 +68,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   pulseSource,
   pulseTime,
   isStarted,
-  isPaused
+  isPaused,
+  performanceProfile = 'original'
 }) => {
   const pointsRef = useRef<THREE.Points>(null);
   const leafRef = useRef<THREE.Points>(null);
@@ -84,14 +86,18 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const idleBlockRefs = useRef<Array<THREE.InstancedMesh | null>>([]);
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
-  const count = 34000;
-  const leafCount = 19000;
-  const mistCount = 76000;
-  const energyCount = 6200;
-  const pollenCount = 9800;
-  const glyphCount = 1900;
-  const idleBlockCount = 2600;
-  const shardCount = 90;
+  const isOptimized = performanceProfile === 'optimized';
+  const count = isOptimized ? 22000 : 34000;
+  const leafCount = isOptimized ? 11000 : 19000;
+  const mistCount = isOptimized ? 36000 : 76000;
+  const energyCount = isOptimized ? 3600 : 6200;
+  const pollenCount = isOptimized ? 5200 : 9800;
+  const glyphCount = isOptimized ? 900 : 1900;
+  const idleBlockCount = isOptimized ? 1400 : 2600;
+  const shardCount = isOptimized ? 45 : 90;
+  const squaresPerScreen = isOptimized ? 42 : 72;
+  const fiberSegmentCount = isOptimized ? 9000 : 19000;
+  const rootFiberSegmentCount = isOptimized ? 4200 : 9000;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
   const squareMatrixObject = useMemo(() => new THREE.Object3D(), []);
@@ -271,7 +277,6 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       speed: number;
       screen: { col: number; row: number };
     }> = [];
-    const squaresPerScreen = 72;
     const squareCols = 14;
     const squareRows = Math.ceil(squaresPerScreen / squareCols);
     Object.values(SCREEN_LAYOUT).forEach((screen) => {
@@ -301,7 +306,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       }
     });
     return squares;
-  }, []);
+  }, [squaresPerScreen]);
 
   const idleBlockData = useMemo(() => {
     const blocks: Array<{
@@ -461,7 +466,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, []);
 
   const [fiberPositions, fiberOrder, fiberColors] = useMemo(() => {
-    const segmentCount = 19000;
+    const segmentCount = fiberSegmentCount;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
     const colors = new Float32Array(segmentCount * 2 * 3);
@@ -633,10 +638,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     addScreenBranch('H2', 1, -1.2, 12);
 
     return [pos, order, colors];
-  }, []);
+  }, [fiberSegmentCount]);
 
   const [rootFiberPositions, rootFiberOrder, rootFiberColors] = useMemo(() => {
-    const segmentCount = 9000;
+    const segmentCount = rootFiberSegmentCount;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
     const colors = new Float32Array(segmentCount * 2 * 3);
@@ -728,7 +733,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     }
 
     return [pos, order, colors];
-  }, []);
+  }, [rootFiberSegmentCount]);
 
   const shardData = useMemo(() => {
     return Array.from({ length: shardCount }).map(() => ({
