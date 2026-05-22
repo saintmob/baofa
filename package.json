@@ -30,7 +30,6 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "three": "^0.184.0",
-    "tone": "^15.1.22",
     "vite": "^6.2.3"
   },
   "devDependencies": {

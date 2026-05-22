@@ -81,14 +81,16 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const fiberRef = useRef<THREE.LineSegments>(null);
   const rootFiberRef = useRef<THREE.LineSegments>(null);
   const squareFieldRef = useRef<THREE.InstancedMesh>(null);
+  const idleBlockRefs = useRef<Array<THREE.InstancedMesh | null>>([]);
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
-  const count = 26000;
-  const leafCount = 14000;
+  const count = 34000;
+  const leafCount = 19000;
   const mistCount = 76000;
-  const energyCount = 4000;
-  const pollenCount = 2500;
-  const glyphCount = 1400;
+  const energyCount = 6200;
+  const pollenCount = 9800;
+  const glyphCount = 1900;
+  const idleBlockCount = 2600;
   const shardCount = 90;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
@@ -107,6 +109,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const scenePosition = isOverviewScreen
     ? [-screenCenter.x, -screenCenter.y, 0]
     : [-screenCenter.x * sceneScale.x, -screenCenter.y * sceneScale.y, 0];
+  const previewDensity = isOverviewScreen ? 0.34 : 1;
+  const previewBrightness = isOverviewScreen ? 0.34 : 1;
   const glyphTexture = useMemo(() => createGlyphTexture(), []);
   const screenCenters = useMemo(() => Object.entries(SCREEN_LAYOUT).map(([id, layout]) => {
     const point = layoutToWorldPoint(layout);
@@ -117,65 +121,123 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     };
   }), []);
 
-  const [positions, initialPositions, growthOrder] = useMemo(() => {
+  const [positions, initialPositions, growthOrder, particleColors] = useMemo(() => {
     const pos = new Float32Array(count * 3);
     const init = new Float32Array(count * 3);
     const order = new Float32Array(count);
+    const colors = new Float32Array(count * 3);
+    const palette = [
+      new THREE.Color("#d9f99d"),
+      new THREE.Color("#bef264"),
+      new THREE.Color("#fef08a"),
+      new THREE.Color("#ffffff"),
+      new THREE.Color("#4ade80"),
+      new THREE.Color("#7dd3fc"),
+    ];
+    const trunkCenterOffsetX = -0.35;
+    const branchPaths = Array.from({ length: 54 }).map((_, index) => {
+      const side = index % 2 === 0 ? 1 : -1;
+      const base = 0.33 + Math.random() * 0.55;
+      const reach = 6 + Math.random() * 17;
+      const lift = 1.2 + Math.random() * 6;
+      const droop = 1.2 + Math.random() * 6;
+      const fork = Math.random() > 0.62 ? 1 : 0;
+      const start = new THREE.Vector3(
+        trunkCenterOffsetX + Math.sin(base * 15) * 0.8 + (Math.random() - 0.5) * 0.7,
+        -15 + base * 28,
+        (Math.random() - 0.5) * 1.5
+      );
+      const points = [
+        start,
+        start.clone().add(new THREE.Vector3(side * reach * 0.22, lift * 0.7, (Math.random() - 0.5) * 2.4)),
+        start.clone().add(new THREE.Vector3(side * reach * 0.58, lift - droop * 0.2 + Math.sin(index) * 1.2, (Math.random() - 0.5) * 4.2)),
+        start.clone().add(new THREE.Vector3(side * reach * (0.9 + fork * 0.18), lift - droop, (Math.random() - 0.5) * 5.2)),
+      ];
+      return {
+        curve: new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.72),
+        base,
+        width: 0.82 + (1 - base) * 0.85,
+      };
+    });
+
     for (let i = 0; i < count; i++) {
       const t = Math.random();
-      const isTrunk = t < 0.46;
-      const isBranch = t >= 0.46 && t < 0.82;
+      const isTrunk = t < 0.42;
+      const isBranch = t >= 0.42 && t < 0.88;
       let x = 0;
       let y = -15;
       let z = 0;
+      let colorMix = 0;
 
       if (isTrunk) {
         const h = Math.random();
-        const width = 0.55 + (1 - h) * 2.4;
-        x = Math.sin(h * 13 + Math.random() * 1.5) * (0.35 + h * 0.7) + (Math.random() - 0.5) * width;
+        const width = 0.32 + (1 - h) * 1.55;
+        const twist = h * 16 + Math.random() * 1.8;
+        x = trunkCenterOffsetX + Math.sin(twist) * (0.2 + h * 0.42) + (Math.random() - 0.5) * width;
         y = -15 + h * 29;
-        z = (Math.random() - 0.5) * (1.5 + h * 0.9);
+        z = Math.cos(twist * 0.82) * (0.18 + h * 0.55) + (Math.random() - 0.5) * (0.75 + h * 0.7);
         order[i] = h * 0.72;
+        colorMix = h;
       } else if (isBranch) {
-        const branchBase = 0.22 + Math.random() * 0.72;
-        const side = Math.random() > 0.5 ? 1 : -1;
-        const reach = Math.pow(Math.random(), 0.72);
-        const branchLength = 5 + branchBase * 15;
-        const droop = Math.pow(reach, 1.5) * (1.5 + Math.random() * 2.8);
-        x = side * reach * branchLength + Math.sin(reach * 8 + branchBase * 5) * 0.8;
-        y = -15 + branchBase * 28 + reach * (2.2 + branchBase * 2.8) - droop;
-        z = (Math.random() - 0.5) * (2 + reach * 4);
-        order[i] = branchBase * 0.76 + reach * 0.22;
+        const path = branchPaths[Math.floor(Math.random() * branchPaths.length)];
+        const reach = Math.pow(Math.random(), 0.64);
+        const point = path.curve.getPoint(reach);
+        const tangent = path.curve.getTangent(reach);
+        const normal = new THREE.Vector3(-tangent.y, tangent.x, tangent.z * 0.25).normalize();
+        const thickness = (1 - reach) * path.width + 0.12;
+        const jitter = Math.pow(Math.random(), 0.7) * thickness;
+        x = point.x + normal.x * (Math.random() - 0.5) * jitter + Math.sin(reach * 24 + i) * 0.32;
+        y = point.y + normal.y * (Math.random() - 0.5) * jitter + Math.cos(reach * 17 + i) * 0.22;
+        z = point.z + (Math.random() - 0.5) * (0.8 + reach * 3.7);
+        order[i] = path.base * 0.7 + reach * 0.3;
+        colorMix = 0.45 + reach * 0.55;
       } else {
-        const crown = Math.random();
+        const path = branchPaths[Math.floor(Math.random() * branchPaths.length)];
+        const tip = path.curve.getPoint(1);
+        const crown = Math.pow(Math.random(), 0.62);
         const angle = Math.random() * Math.PI * 2;
-        const radius = 5 + Math.random() * 17;
-        x = Math.cos(angle) * radius * (0.9 + crown * 0.5);
-        y = 3 + Math.sin(angle) * radius * 0.34 + Math.random() * 13;
-        z = (Math.random() - 0.5) * 8;
-        order[i] = 0.58 + Math.random() * 0.42;
+        const radius = 0.8 + crown * (2.4 + Math.random() * 4.4);
+        x = tip.x + Math.cos(angle) * radius + Math.sin(i * 0.71) * 0.7;
+        y = tip.y + Math.sin(angle) * radius * 0.58 + Math.random() * 2.2;
+        z = tip.z + (Math.random() - 0.5) * (2 + crown * 5);
+        order[i] = 0.7 + Math.random() * 0.3;
+        colorMix = 0.78 + Math.random() * 0.22;
       }
-      
+
       pos[i * 3] = init[i * 3] = x;
       pos[i * 3 + 1] = init[i * 3 + 1] = y;
       pos[i * 3 + 2] = init[i * 3 + 2] = z;
+      const hot = Math.random();
+      const color = hot > 0.94
+        ? palette[3]
+        : hot > 0.86
+          ? palette[5]
+        : palette[Math.floor(Math.min(palette.length - 1, colorMix * (palette.length - 1)))].clone().lerp(palette[2], Math.random() * 0.28);
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
     }
-    return [pos, init, order];
+    return [pos, init, order, colors];
   }, [count]);
 
-  const [leafPositions, leafOrder] = useMemo(() => {
+  const [leafPositions, leafOrder, leafColors] = useMemo(() => {
     const pos = new Float32Array(leafCount * 3);
     const order = new Float32Array(leafCount);
+    const colors = new Float32Array(leafCount * 3);
     for (let i = 0; i < leafCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const radius = Math.pow(Math.random(), 0.55) * 18;
+      const radius = Math.pow(Math.random(), 0.5) * 21;
       const sideBias = Math.sin(angle * 3) * 1.8;
       pos[i * 3] = Math.cos(angle) * radius + sideBias;
-      pos[i * 3 + 1] = 1.5 + Math.sin(angle) * radius * 0.28 + Math.random() * 16;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 9;
-      order[i] = 0.48 + Math.random() * 0.52;
+      pos[i * 3 + 1] = 1 + Math.sin(angle) * radius * 0.32 + Math.random() * 17;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 10;
+      order[i] = 0.52 + Math.random() * 0.48;
+      const color = new THREE.Color(Math.random() > 0.58 ? "#fef08a" : "#86efac").lerp(new THREE.Color("#ffffff"), Math.random() * 0.22);
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
     }
-    return [pos, order];
+    return [pos, order, colors];
   }, [leafCount]);
 
   const mistPositions = useMemo(() => {
@@ -241,10 +303,55 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     return squares;
   }, []);
 
+  const idleBlockData = useMemo(() => {
+    const blocks: Array<{
+      position: THREE.Vector3;
+      rotation: THREE.Euler;
+      scale: number;
+      drift: THREE.Vector3;
+      spin: THREE.Vector3;
+      phase: number;
+      speed: number;
+      colorGroup: number;
+    }> = [];
+    for (let i = 0; i < idleBlockCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.pow(Math.random(), 0.68);
+      blocks.push({
+        position: new THREE.Vector3(
+          Math.cos(angle) * radius * 31 + (Math.random() - 0.5) * 3.8,
+          Math.sin(angle) * radius * 17 + (Math.random() - 0.5) * 2.4,
+          (Math.random() - 0.5) * 8
+        ),
+        rotation: new THREE.Euler(
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+          Math.random() * Math.PI
+        ),
+        scale: 0.018 + Math.random() * 0.022,
+        drift: new THREE.Vector3(
+          0.12 + Math.random() * 0.24,
+          0.08 + Math.random() * 0.18,
+          0.1 + Math.random() * 0.22
+        ),
+        spin: new THREE.Vector3(
+          (Math.random() - 0.5) * 1.8,
+          (Math.random() - 0.5) * 1.9,
+          (Math.random() - 0.5) * 2.4
+        ),
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.46 + Math.random() * 1.05,
+        colorGroup: i % 5,
+      });
+    }
+    return blocks;
+  }, [idleBlockCount]);
+
   const [energyPositions, energyInitial, energyOrder] = useMemo(() => {
     const pos = new Float32Array(energyCount * 3);
     const init = new Float32Array(energyCount * 3);
     const order = new Float32Array(energyCount);
+    const trunkCenterOffsetX = 0.18;
     for (let i = 0; i < energyCount; i++) {
       const t = i / energyCount;
       const lane = i % 9;
@@ -252,7 +359,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       const strand = lane - 4;
       const y = -15 + t * 31;
       const flare = Math.pow(t, 1.25) * 10;
-      const x = Math.sin(t * 18 + lane * 0.9) * (0.5 + t * 1.5) + side * flare * Math.max(0, t - 0.42) + strand * 0.08;
+      const x = trunkCenterOffsetX + Math.sin(t * 18 + lane * 0.9) * (0.5 + t * 1.5) + side * flare * Math.max(0, t - 0.42) + strand * 0.08;
       const z = Math.cos(t * 14 + lane) * (0.5 + t * 2.4);
       pos[i * 3] = init[i * 3] = x;
       pos[i * 3 + 1] = init[i * 3 + 1] = y;
@@ -265,13 +372,25 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const [pollenPositions, pollenOrder] = useMemo(() => {
     const pos = new Float32Array(pollenCount * 3);
     const order = new Float32Array(pollenCount);
+    const f1Center = layoutToWorldPoint(SCREEN_LAYOUT.F1);
     for (let i = 0; i < pollenCount; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = Math.pow(Math.random(), 0.45) * 22;
-      pos[i * 3] = Math.cos(angle) * radius;
-      pos[i * 3 + 1] = -2 + Math.random() * 22;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 12;
-      order[i] = 0.38 + Math.random() * 0.62;
+      if (i < 5200) {
+        const x = f1Center.x + (Math.random() - 0.5) * 8.8;
+        const localX = x - f1Center.x;
+        const normalized = Math.abs(localX) / 4.4;
+        const bandCenter = f1Center.y - 2.58 + Math.max(0, 1 - normalized * normalized) * 0.12;
+        pos[i * 3] = x + (Math.random() - 0.5) * 0.1;
+        pos[i * 3 + 1] = bandCenter + (Math.random() - 0.5) * 0.88;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 3.2;
+        order[i] = 0.015 + Math.random() * 0.12;
+      } else {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.pow(Math.random(), 0.45) * 22;
+        pos[i * 3] = Math.cos(angle) * radius;
+        pos[i * 3 + 1] = -2 + Math.random() * 22;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 12;
+        order[i] = 0.38 + Math.random() * 0.62;
+      }
     }
     return [pos, order];
   }, [pollenCount]);
@@ -341,13 +460,15 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     return [pos, order];
   }, []);
 
-  const [fiberPositions, fiberOrder] = useMemo(() => {
-    const segmentCount = 9000;
+  const [fiberPositions, fiberOrder, fiberColors] = useMemo(() => {
+    const segmentCount = 19000;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
+    const colors = new Float32Array(segmentCount * 2 * 3);
+    const trunkCenterOffsetX = -0.35;
     let segment = 0;
 
-    const addSegment = (a: THREE.Vector3, b: THREE.Vector3, grow: number) => {
+    const addSegment = (a: THREE.Vector3, b: THREE.Vector3, grow: number, color: THREE.Color) => {
       if (segment >= segmentCount) return;
       const ix = segment * 6;
       pos[ix] = a.x;
@@ -357,80 +478,172 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       pos[ix + 4] = b.y;
       pos[ix + 5] = b.z;
       order[segment] = grow;
+      colors[ix] = colors[ix + 3] = color.r;
+      colors[ix + 1] = colors[ix + 4] = color.g;
+      colors[ix + 2] = colors[ix + 5] = color.b;
       segment++;
     };
 
-    for (let strand = 0; strand < 1150; strand++) {
+    const addSmoothStrand = (points: THREE.Vector3[], growStart: number, growEnd: number, samples: number, color: THREE.Color) => {
+      const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.42);
+      let previous = curve.getPoint(0);
+      for (let sample = 1; sample <= samples; sample++) {
+        const t = sample / samples;
+        const next = curve.getPoint(t);
+        addSegment(previous, next, THREE.MathUtils.lerp(growStart, growEnd, t), color);
+        previous = next;
+      }
+    };
+
+    for (let strand = 0; strand < 760; strand++) {
       const type = Math.random();
-      const steps = 6 + Math.floor(Math.random() * 12);
       const branchSide = Math.random() > 0.5 ? 1 : -1;
       const baseT = Math.random();
-      let p: THREE.Vector3;
-      let direction: THREE.Vector3;
+      const points: THREE.Vector3[] = [];
+      let growStart = 0;
+      let growEnd = 1;
 
       if (type < 0.34) {
         const t = Math.random();
-        p = new THREE.Vector3(
-          (Math.random() - 0.5) * (1.2 + (1 - t) * 3.4) + Math.sin(t * 9) * 0.8,
+        const start = new THREE.Vector3(
+          trunkCenterOffsetX + (Math.random() - 0.5) * (1.2 + (1 - t) * 3.4) + Math.sin(t * 9) * 0.8,
           -16 + t * 23,
           (Math.random() - 0.5) * 2.1
         );
-        direction = new THREE.Vector3(
-          Math.sin(t * 12 + strand) * 0.08,
-          0.45 + Math.random() * 0.32,
-          (Math.random() - 0.5) * 0.1
+        const length = 3.4 + Math.random() * 5.2;
+        growStart = Math.max(0.04, (start.y + 16) / 31);
+        growEnd = Math.min(1, growStart + length / 31);
+        points.push(
+          start,
+          start.clone().add(new THREE.Vector3(Math.sin(baseT * 7) * 0.5, length * 0.32, Math.cos(baseT * 5) * 0.22)),
+          start.clone().add(new THREE.Vector3(Math.sin(baseT * 9 + 1.4) * 0.68, length * 0.68, Math.sin(baseT * 6) * 0.28)),
+          start.clone().add(new THREE.Vector3(Math.sin(baseT * 11 + 0.8) * 0.52, length, Math.cos(baseT * 8) * 0.18))
         );
       } else if (type < 0.7) {
         const t = 0.34 + Math.random() * 0.56;
-        p = new THREE.Vector3(
-          Math.sin(t * 8) * 0.9 + (Math.random() - 0.5) * 1.2,
+        const start = new THREE.Vector3(
+          trunkCenterOffsetX + Math.sin(t * 8) * 0.9 + (Math.random() - 0.5) * 1.2,
           -15 + t * 28,
           (Math.random() - 0.5) * 2.4
         );
-        direction = new THREE.Vector3(
-          branchSide * (0.45 + Math.random() * 0.9),
-          0.18 + Math.random() * 0.38,
-          (Math.random() - 0.5) * 0.42
+        const reach = 4.2 + Math.random() * 9.5;
+        const lift = 1.8 + Math.random() * 3.2;
+        growStart = Math.max(0.04, (start.y + 16) / 31);
+        growEnd = Math.min(1, growStart + 0.18 + Math.random() * 0.22);
+        points.push(
+          start,
+          start.clone().add(new THREE.Vector3(branchSide * reach * 0.28, lift * 0.45, Math.sin(baseT * 6) * 0.55)),
+          start.clone().add(new THREE.Vector3(branchSide * reach * 0.68, lift * 0.82 - 0.5, Math.cos(baseT * 5) * 0.9)),
+          start.clone().add(new THREE.Vector3(branchSide * reach, lift - Math.random() * 1.6, Math.sin(baseT * 9) * 1.1))
         );
       } else {
         const angle = Math.random() * Math.PI * 2;
         const radius = Math.pow(Math.random(), 0.7) * 14;
-        p = new THREE.Vector3(
-          Math.cos(angle) * radius,
+        const start = new THREE.Vector3(
+          trunkCenterOffsetX + Math.cos(angle) * radius,
           1.5 + Math.random() * 14,
           Math.sin(angle) * 2.2
         );
-        direction = new THREE.Vector3(
-          Math.cos(angle + Math.random() * 1.4) * (0.28 + Math.random() * 0.5),
-          (Math.random() - 0.35) * 0.5,
-          Math.sin(angle) * 0.18
+        const sweep = 2.2 + Math.random() * 6.5;
+        growStart = Math.max(0.04, (start.y + 16) / 31);
+        growEnd = Math.min(1, growStart + 0.12 + Math.random() * 0.2);
+        points.push(
+          start,
+          start.clone().add(new THREE.Vector3(Math.cos(angle + 0.6) * sweep * 0.35, Math.random() * 1.2 - 0.4, Math.sin(angle + 0.6) * 0.7)),
+          start.clone().add(new THREE.Vector3(Math.cos(angle + 1.1) * sweep * 0.72, Math.random() * 1.5 - 0.6, Math.sin(angle + 1.1) * 1.0)),
+          start.clone().add(new THREE.Vector3(Math.cos(angle + 1.5) * sweep, Math.random() * 1.4 - 0.7, Math.sin(angle + 1.5) * 1.2))
         );
       }
 
-      for (let step = 0; step < steps; step++) {
-        const grow = Math.max(0.04, (p.y + 16) / 31);
-        const curl = new THREE.Vector3(
-          Math.sin(step * 0.8 + strand * 1.7 + baseT * 9) * 0.32,
-          Math.cos(step * 0.37 + strand) * 0.08,
-          Math.sin(step * 0.5 + strand) * 0.11
-        );
-        const next = p.clone().add(direction).add(curl);
-        addSegment(p, next, grow);
-        p = next;
-        direction.multiplyScalar(0.95).add(curl.multiplyScalar(0.08));
-      }
+      const strandColor = new THREE.Color(
+        strand % 13 === 0
+          ? "#22d3ee"
+          : strand % 17 === 0
+            ? "#38bdf8"
+            : strand % 7 === 0
+              ? "#bef264"
+              : strand % 5 === 0
+                ? "#fef08a"
+                : strand % 11 === 0
+                  ? "#86efac"
+                  : "#ffffff"
+      );
+      addSmoothStrand(points, growStart, growEnd, 10 + Math.floor(Math.random() * 8), strandColor);
     }
 
-    return [pos, order];
+    const addScreenBranch = (targetId: string, branchSide: -1 | 1, baseY: number, copies: number) => {
+      const targetLayout = SCREEN_LAYOUT[targetId];
+      if (!targetLayout) return;
+      const target = layoutToWorldPoint(targetLayout);
+      for (let copy = 0; copy < copies; copy++) {
+        const wobble = 0.7 + Math.random() * 1.5;
+        const phase = Math.random() * Math.PI * 2;
+        const start = new THREE.Vector3(
+          trunkCenterOffsetX + Math.sin(baseY * 0.48 + copy) * 0.7 + (Math.random() - 0.5) * 0.8,
+          baseY + (Math.random() - 0.5) * 1.0,
+          (Math.random() - 0.5) * 1.4
+        );
+        const end = new THREE.Vector3(
+          target.x + (Math.random() - 0.5) * 2.6,
+          target.y + (Math.random() - 0.5) * 2.0,
+          (Math.random() - 0.5) * 2.8
+        );
+        const controlLift = targetId.startsWith('C') ? 2.8 : 0.8;
+        const branchColor = new THREE.Color(
+          copy % 9 === 0 ? "#22d3ee" : copy % 11 === 0 ? "#38bdf8" : copy % 4 === 0 ? "#bef264" : copy % 3 === 0 ? "#fef08a" : "#ffffff"
+        );
+        addSmoothStrand(
+          [
+            start,
+            start.clone().lerp(end, 0.2).add(new THREE.Vector3(
+              branchSide * (1.2 + Math.sin(phase) * wobble),
+              controlLift + Math.random() * 1.8,
+              (Math.random() - 0.5) * 2.2
+            )),
+            start.clone().lerp(end, 0.42).add(new THREE.Vector3(
+              branchSide * (3.2 + Math.cos(phase * 0.7) * wobble * 1.4),
+              Math.sin(phase + copy * 0.43) * 1.35 + Math.random() * 1.1,
+              (Math.random() - 0.5) * 3.2
+            )),
+            start.clone().lerp(end, 0.64).add(new THREE.Vector3(
+              branchSide * (1.4 + Math.sin(phase * 1.3) * wobble * 1.8),
+              Math.cos(phase + copy * 0.31) * 1.6 - 0.4 + Math.random() * 1.0,
+              (Math.random() - 0.5) * 3.6
+            )),
+            start.clone().lerp(end, 0.82).add(new THREE.Vector3(
+              branchSide * (2.8 + Math.cos(phase * 1.6) * wobble),
+              Math.sin(phase * 0.9 + copy) * 1.1 + Math.random() * 0.9 - 0.5,
+              (Math.random() - 0.5) * 2.4
+            )),
+            end,
+          ],
+          0.28 + Math.random() * 0.18,
+          0.86 + Math.random() * 0.12,
+          34 + Math.floor(Math.random() * 12),
+          branchColor
+        );
+      }
+    };
+
+    addScreenBranch('C1', -1, 5.6, 16);
+    addScreenBranch('C2', -1, 4.2, 14);
+    addScreenBranch('G1', -1, 1.2, 14);
+    addScreenBranch('G2', -1, -1.2, 12);
+    addScreenBranch('H1', 1, 1.2, 14);
+    addScreenBranch('H2', 1, -1.2, 12);
+
+    return [pos, order, colors];
   }, []);
 
-  const [rootFiberPositions, rootFiberOrder] = useMemo(() => {
-    const segmentCount = 3200;
+  const [rootFiberPositions, rootFiberOrder, rootFiberColors] = useMemo(() => {
+    const segmentCount = 9000;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
+    const colors = new Float32Array(segmentCount * 2 * 3);
+    const f1Center = layoutToWorldPoint(SCREEN_LAYOUT.F1);
     let segment = 0;
 
-    const addSegment = (a: THREE.Vector3, b: THREE.Vector3, grow: number) => {
+    const addSegment = (a: THREE.Vector3, b: THREE.Vector3, grow: number, color: THREE.Color) => {
       if (segment >= segmentCount) return;
       const ix = segment * 6;
       pos[ix] = a.x;
@@ -440,27 +653,81 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       pos[ix + 4] = b.y;
       pos[ix + 5] = b.z;
       order[segment] = grow;
+      colors[ix] = colors[ix + 3] = color.r;
+      colors[ix + 1] = colors[ix + 4] = color.g;
+      colors[ix + 2] = colors[ix + 5] = color.b;
       segment++;
     };
 
-    for (let strand = 0; strand < 360; strand++) {
-      const side = Math.random() > 0.5 ? 1 : -1;
-      const steps = 7 + Math.floor(Math.random() * 10);
-      let p = new THREE.Vector3((Math.random() - 0.5) * 2.2, -15.6 + Math.random() * 1.5, (Math.random() - 0.5) * 1.8);
-      let direction = new THREE.Vector3(side * (0.35 + Math.random() * 0.65), -0.12 + Math.random() * 0.12, (Math.random() - 0.5) * 0.2);
-      for (let step = 0; step < steps; step++) {
-        const next = p.clone().add(direction).add(new THREE.Vector3(
-          Math.sin(step * 0.9 + strand) * 0.24,
-          Math.cos(step * 0.5 + strand) * 0.08,
-          Math.sin(step * 0.7) * 0.08
-        ));
-        addSegment(p, next, 0.02 + step / steps * 0.18);
-        p = next;
-        direction.multiplyScalar(0.98);
+    const addSmoothStrand = (points: THREE.Vector3[], growStart: number, growEnd: number, samples: number, color: THREE.Color) => {
+      const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.45);
+      let previous = curve.getPoint(0);
+      for (let sample = 1; sample <= samples; sample++) {
+        const t = sample / samples;
+        const next = curve.getPoint(t);
+        addSegment(previous, next, THREE.MathUtils.lerp(growStart, growEnd, t), color);
+        previous = next;
       }
+    };
+
+    for (let strand = 0; strand < 430; strand++) {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      const reach = 7 + Math.random() * 14.5;
+      const startX = (Math.random() - 0.5) * 4.2;
+      const endX = side * reach;
+      const arch = 0.45 + Math.random() * 1.45;
+      const baseY = f1Center.y - 3.55 + Math.random() * 0.7;
+      const depth = (Math.random() - 0.5) * 1.4;
+      const start = new THREE.Vector3(startX, baseY + arch * 0.65, (Math.random() - 0.5) * 1.2);
+      const strandColor = new THREE.Color(strand % 10 === 0 ? "#22d3ee" : strand % 14 === 0 ? "#38bdf8" : strand % 4 === 0 ? "#fef08a" : strand % 3 === 0 ? "#bef264" : "#ecfccb");
+      addSmoothStrand(
+        [
+          start,
+          new THREE.Vector3(
+            THREE.MathUtils.lerp(startX, endX, 0.28),
+            baseY + arch * (0.85 + Math.random() * 0.32) + Math.sin(strand * 0.31) * 0.16,
+            depth * 0.25
+          ),
+          new THREE.Vector3(
+            THREE.MathUtils.lerp(startX, endX, 0.62),
+            baseY + arch * (0.62 + Math.random() * 0.3) + Math.cos(strand * 0.23) * 0.18,
+            depth * 0.7
+          ),
+          new THREE.Vector3(
+            endX,
+            baseY + Math.random() * 0.42 - 0.28,
+            depth
+          ),
+        ],
+        0.02,
+        0.2,
+        14 + Math.floor(Math.random() * 8),
+        strandColor
+      );
     }
 
-    return [pos, order];
+    for (let strand = 0; strand < 130; strand++) {
+      const width = 20 + Math.random() * 6;
+      const yBase = f1Center.y - 3.2 + Math.random() * 0.45;
+      const lift = 0.28 + Math.random() * 0.62;
+      const z = (Math.random() - 0.5) * 1.1;
+      const strandColor = new THREE.Color(strand % 8 === 0 ? "#22d3ee" : strand % 12 === 0 ? "#38bdf8" : strand % 4 === 0 ? "#fef08a" : "#ecfccb");
+      addSmoothStrand(
+        [
+          new THREE.Vector3(-width, yBase + Math.random() * 0.35, z),
+          new THREE.Vector3(-width * 0.46, yBase + lift * 0.88, z + (Math.random() - 0.5) * 0.6),
+          new THREE.Vector3(0, yBase + lift + Math.random() * 0.42, z + (Math.random() - 0.5) * 0.8),
+          new THREE.Vector3(width * 0.46, yBase + lift * 0.88, z + (Math.random() - 0.5) * 0.6),
+          new THREE.Vector3(width, yBase + Math.random() * 0.35, z),
+        ],
+        0.04,
+        0.22,
+        24 + Math.floor(Math.random() * 8),
+        strandColor
+      );
+    }
+
+    return [pos, order, colors];
   }, []);
 
   const shardData = useMemo(() => {
@@ -478,7 +745,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
   useFrame((state, delta) => {
     if (isPaused) return;
-    
+
     const time = state.clock.getElapsedTime();
     if (interactionPoint && mode === 'interaction') {
       ripplePhaseRef.current = Math.min(1, ripplePhaseRef.current + delta * 1.25);
@@ -505,7 +772,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const tempoLevel = THREE.MathUtils.clamp(intensity, 0, 1) * (tempoPalette.length - 1);
     const tempoIndex = Math.min(tempoPalette.length - 2, Math.floor(tempoLevel));
     const tempoColor = tempoPalette[tempoIndex].clone().lerp(tempoPalette[tempoIndex + 1], tempoLevel - tempoIndex);
-    
+    const bloomPhase = visibleGrowth > 0.985 ? THREE.MathUtils.smoothstep(intensity, 0.48, 0.98) : 0;
+    const bloomColor = tempoColor.clone().lerp(new THREE.Color("#ffffff"), 0.18);
+    const particleSurge = 1 + bloomPhase * 0.42;
+
     // Update appearance stats
     if (pointsRef.current) {
       const mat = pointsRef.current.material as THREE.PointsMaterial;
@@ -522,13 +792,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         opacityRef.current = THREE.MathUtils.lerp(opacityRef.current, targetOpacity, 0.03);
       }
 
-      mat.opacity = opacityRef.current;
+      mat.opacity = opacityRef.current * previewBrightness;
       mat.visible = opacityRef.current > 0.0001;
 
-      // Color Spectrum Shift 
-      const c1 = new THREE.Color("#22d3ee");
-      const c2 = new THREE.Color("#8b5cf6");
-      const c3 = new THREE.Color("#ec4899");
+      // Color Spectrum Shift
+      const c1 = new THREE.Color("#4ade80");
+      const c2 = new THREE.Color("#bef264");
+      const c3 = new THREE.Color("#fef08a");
       const c4 = new THREE.Color("#ffffff");
       if (intensity < 0.4) {
         colorRef.current.copy(c1).lerp(c2, intensity / 0.4);
@@ -537,67 +807,74 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       } else {
         colorRef.current.copy(c3).lerp(c4, (intensity - 0.8) / 0.2);
       }
-      mat.color.copy(colorRef.current);
-      
+      mat.color.copy(c4).lerp(bloomColor, bloomPhase * 0.88);
+
       // Sync shard appearance with stronger emissive sync
       if (leafRef.current) {
         const leafMat = leafRef.current.material as THREE.PointsMaterial;
-        leafMat.opacity = Math.min(0.8, opacityRef.current * (0.45 + visibleGrowth * 0.5));
-        leafMat.color.copy(new THREE.Color("#7dd3fc").lerp(new THREE.Color("#b7f7a5"), visibleGrowth));
-        leafRef.current.geometry.setDrawRange(0, Math.floor(leafCount * visibleGrowth));
+        leafMat.opacity = Math.min(0.98, opacityRef.current * (0.5 + visibleGrowth * 0.58 + bloomPhase * 0.32)) * previewBrightness;
+        leafMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase * 0.82);
+        leafRef.current.geometry.setDrawRange(0, Math.floor(leafCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
       }
 
       if (mistRef.current) {
         const mistMat = mistRef.current.material as THREE.PointsMaterial;
-        mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25);
-        mistMat.size = 0.05 + Math.max(idleMist, interactionPreview) * 0.07 + intensity * 0.06;
+        mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25) * (isOverviewScreen ? 0.58 : 1);
+        mistMat.size = (0.05 + Math.max(idleMist, interactionPreview) * 0.07 + intensity * 0.06) * (isOverviewScreen ? 0.74 : 1);
         mistMat.color.copy(tempoColor);
-        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview)));
+        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1)));
       }
 
       if (energyRef.current) {
         const energyMat = energyRef.current.material as THREE.PointsMaterial;
-        energyMat.opacity = Math.min(0.95, 0.24 + intensity * 0.9 + (gestureActive ? 0.25 : 0));
-        energyMat.size = 0.03 + intensity * 0.07 + (gestureActive ? 0.025 : 0);
-        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * visibleGrowth));
+        energyMat.opacity = Math.min(1, 0.24 + intensity * 0.9 + bloomPhase * 0.34 + (gestureActive ? 0.25 : 0)) * previewBrightness;
+        energyMat.size = (0.035 + intensity * 0.08 + bloomPhase * 0.045 + (gestureActive ? 0.03 : 0)) * (isOverviewScreen ? 0.72 : 1);
+        energyMat.color.copy(bloomColor);
+        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
       }
 
       if (pollenRef.current) {
         const pollenMat = pollenRef.current.material as THREE.PointsMaterial;
-        pollenMat.opacity = Math.min(0.9, visibleGrowth * 0.75 + intensity * 0.2);
-        pollenMat.size = 0.04 + intensity * 0.08;
-        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * visibleGrowth));
+        pollenMat.opacity = Math.min(0.9, 0.08 + visibleGrowth * 0.58 + intensity * 0.16 + bloomPhase * 0.28) * (isOverviewScreen ? 0.3 : 1);
+        pollenMat.size = (0.06 + intensity * 0.065 + bloomPhase * 0.035) * (isOverviewScreen ? 0.58 : 1);
+        pollenMat.color.copy(bloomColor);
+        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * Math.min(1, visibleGrowth * particleSurge) * (isOverviewScreen ? 0.28 : 1)));
       }
 
       if (glyphRef.current) {
         const glyphMat = glyphRef.current.material as THREE.PointsMaterial;
-        glyphMat.opacity = Math.min(0.08, visibleGrowth * 0.08);
-        glyphMat.size = 0.045 + intensity * 0.04;
-        glyphRef.current.geometry.setDrawRange(0, Math.floor(glyphCount * visibleGrowth));
+        glyphMat.opacity = Math.min(0.24, 0.025 + visibleGrowth * 0.09 + bloomPhase * 0.09) * (isOverviewScreen ? 0.5 : 1);
+        glyphMat.size = 0.042 + intensity * 0.045 + bloomPhase * 0.026;
+        glyphMat.color.copy(bloomColor);
+        glyphRef.current.geometry.setDrawRange(0, Math.floor(glyphCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
       }
 
       if (branchLineRef.current) {
         const branchMat = branchLineRef.current.material as THREE.LineBasicMaterial;
-        branchMat.opacity = Math.min(0.18, visibleGrowth * 0.16 + intensity * 0.04);
-        branchLineRef.current.geometry.setDrawRange(0, Math.floor((branchLinePositions.length / 3) * visibleGrowth));
+        branchMat.color.copy(bloomColor);
+        branchMat.opacity = Math.min(0.58, visibleGrowth * 0.22 + intensity * 0.06 + bloomPhase * 0.32) * previewBrightness;
+        branchLineRef.current.geometry.setDrawRange(0, Math.floor((branchLinePositions.length / 3) * visibleGrowth * previewDensity));
       }
 
       if (contourRef.current) {
         const contourMat = contourRef.current.material as THREE.LineBasicMaterial;
-        contourMat.opacity = Math.min(0.08, visibleGrowth * 0.06 + intensity * 0.02);
-        contourRef.current.geometry.setDrawRange(0, Math.floor((contourPositions.length / 3) * visibleGrowth));
+        contourMat.color.copy(bloomColor);
+        contourMat.opacity = Math.min(0.28, visibleGrowth * 0.08 + intensity * 0.025 + bloomPhase * 0.17) * previewBrightness;
+        contourRef.current.geometry.setDrawRange(0, Math.floor((contourPositions.length / 3) * visibleGrowth * previewDensity));
       }
 
       if (fiberRef.current) {
         const fiberMat = fiberRef.current.material as THREE.LineBasicMaterial;
-        fiberMat.opacity = visibleGrowth > 0.001 ? Math.min(0.72, 0.18 + visibleGrowth * 0.42 + intensity * 0.18) : 0;
-        fiberRef.current.geometry.setDrawRange(0, Math.floor((fiberPositions.length / 3) * visibleGrowth));
+        fiberMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase);
+        fiberMat.opacity = visibleGrowth > 0.001 ? Math.min(0.98, 0.2 + visibleGrowth * 0.48 + intensity * 0.2 + bloomPhase * 0.24) * (isOverviewScreen ? 0.38 : 1) : 0;
+        fiberRef.current.geometry.setDrawRange(0, Math.floor((fiberPositions.length / 3) * visibleGrowth * previewDensity));
       }
 
       if (rootFiberRef.current) {
         const rootMat = rootFiberRef.current.material as THREE.LineBasicMaterial;
-        rootMat.opacity = visibleGrowth > 0.001 ? Math.min(0.58, 0.12 + visibleGrowth * 0.38 + intensity * 0.12) : 0;
-        rootFiberRef.current.geometry.setDrawRange(0, Math.floor((rootFiberPositions.length / 3) * visibleGrowth));
+        rootMat.color.copy(new THREE.Color("#ffffff")).lerp(bloomColor, bloomPhase);
+        rootMat.opacity = visibleGrowth > 0.001 ? Math.min(0.88, 0.16 + visibleGrowth * 0.44 + intensity * 0.14 + bloomPhase * 0.22) * (isOverviewScreen ? 0.38 : 1) : 0;
+        rootFiberRef.current.geometry.setDrawRange(0, Math.floor((rootFiberPositions.length / 3) * visibleGrowth * previewDensity));
       }
 
       if (meshRef.current) {
@@ -607,20 +884,20 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           const mMat = m.material as THREE.MeshStandardMaterial;
           mMat.color.copy(colorRef.current);
           mMat.emissive.copy(colorRef.current);
-          mMat.emissiveIntensity = 0.5 + intensity * 4;
-          mMat.opacity = opacityRef.current * 0.2 * visibleGrowth;
+          mMat.emissiveIntensity = 0.5 + intensity * 4 + bloomPhase * 2.6;
+          mMat.opacity = opacityRef.current * 0.2 * visibleGrowth * previewBrightness;
         });
       }
     }
-    
+
     if (pointsRef.current) {
       const posAttr = pointsRef.current.geometry.attributes.position;
       const mat = pointsRef.current.material as THREE.PointsMaterial;
 
-      const activeCount = visibleGrowth > 0.001 ? Math.floor(count * renderGrowth) : 0;
+      const activeCount = visibleGrowth > 0.001 ? Math.floor(count * Math.min(1, renderGrowth * particleSurge) * previewDensity) : 0;
       pointsRef.current.geometry.setDrawRange(0, Math.max(0, activeCount));
 
-      mat.size = 0.018 + (intensity * 0.055) + (gestureActive ? 0.025 : 0);
+      mat.size = (0.018 + (intensity * 0.055) + bloomPhase * 0.025 + (gestureActive ? 0.025 : 0)) * (isOverviewScreen ? 0.72 : 1);
 
       for (let i = 0; i < count; i++) {
         const ix = i * 3;
@@ -630,8 +907,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         const audioIdx = i % audioData.length;
         const audioValue = Math.abs(audioData[audioIdx]) * 3.0;
         const reveal = THREE.MathUtils.smoothstep(visibleGrowth + 0.03, growthOrder[i], growthOrder[i] + 0.12);
-        const pulse = (gestureActive ? 0.025 : 0.009) + audioValue * 0.008;
-        
+        const pulse = (gestureActive ? 0.032 : 0.012) + audioValue * 0.01;
+
         // Before the tree grows, a click on one screen propagates through every screen area.
         if (mode === 'interaction' && visibleGrowth <= 0.001 && sourceLayout) {
           screenCenters.forEach(({ layout, point }) => {
@@ -677,8 +954,15 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         posAttr.array[iy] += (initialPositions[iy] - posAttr.array[iy]) * lerpFactor;
         posAttr.array[iz] += (initialPositions[iz] - posAttr.array[iz]) * lerpFactor;
 
-        posAttr.array[ix] += Math.sin(time * 0.55 + initialPositions[iz]) * pulse * reveal;
-        posAttr.array[iy] += Math.cos(time * 0.45 + initialPositions[ix]) * pulse * reveal;
+        const heightOrder = growthOrder[i];
+        const flow = ((time * (0.09 + intensity * 0.16) + heightOrder * 1.8 + (i % 17) * 0.013) % 1) - 0.5;
+        const upperBurst = Math.max(0, heightOrder - 0.62) * 2.6;
+        const breathe = Math.sin(time * 0.42 + heightOrder * 8) * (0.018 + visibleGrowth * 0.045);
+        posAttr.array[ix] += Math.sin(time * 0.55 + initialPositions[iz] + heightOrder * 12) * pulse * reveal;
+        posAttr.array[iy] += (Math.cos(time * 0.45 + initialPositions[ix]) * pulse + flow * 0.18) * reveal;
+        posAttr.array[iz] += Math.cos(time * 0.5 + initialPositions[ix] * 0.4) * pulse * 0.65 * reveal;
+        posAttr.array[ix] += initialPositions[ix] * breathe * upperBurst;
+        posAttr.array[iz] += initialPositions[iz] * breathe * upperBurst;
       }
       posAttr.needsUpdate = true;
     }
@@ -687,7 +971,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       const mesh = squareFieldRef.current;
       const material = mesh.material as THREE.MeshBasicMaterial;
       material.color.copy(tempoColor);
-      material.opacity = Math.min(0.82, 0.34 + intensity * 0.22);
+      material.opacity = Math.min(0.95, 0.34 + intensity * 0.22 + bloomPhase * 0.22);
 
       squareData.forEach((data, i) => {
         let pulse = 0;
@@ -712,23 +996,64 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           0,
           data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1) + Math.cos(time * 1.2 + i) * 0.18
         );
-        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + pulse * 1.25));
+        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25));
         squareMatrixObject.updateMatrix();
         mesh.setMatrixAt(i, squareMatrixObject.matrix);
       });
       mesh.instanceMatrix.needsUpdate = true;
     }
 
+    const idleBlockPalette = [
+      new THREE.Color("#2dd4bf"),
+      new THREE.Color("#22d3ee"),
+      new THREE.Color("#bef264"),
+      new THREE.Color("#38bdf8"),
+      new THREE.Color("#c084fc"),
+    ];
+    idleBlockRefs.current.forEach((mesh, groupIndex) => {
+      if (!mesh) return;
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      const idlePresence = visibleGrowth <= 0.001 && mode !== 'flow' && mode !== 'climax' ? 1 : 0;
+      const interactionBoost = mode === 'interaction' ? 1 : 0;
+      material.color
+        .copy(idleBlockPalette[groupIndex])
+        .lerp(tempoColor, Math.min(0.44, intensity * 0.24 + interactionBoost * 0.3))
+        .lerp(new THREE.Color("#ecfeff"), groupIndex === 0 ? 0.18 : 0.06);
+      material.opacity = (0.38 + intensity * 0.1) * idlePresence * (isOverviewScreen ? 0.44 : 1);
+      material.visible = material.opacity > 0.001;
+
+      let instanceIndex = 0;
+      idleBlockData.forEach((data) => {
+        if (data.colorGroup !== groupIndex) return;
+        const pulse = 0.9 + Math.sin(time * (1.15 + data.speed) + data.phase) * 0.22 + interactionBoost * 0.14;
+        squareMatrixObject.position.set(
+          data.position.x + Math.sin(time * data.speed + data.phase) * data.drift.x,
+          data.position.y + Math.cos(time * data.speed * 0.74 + data.phase) * data.drift.y,
+          data.position.z + Math.sin(time * data.speed * 0.52 + data.phase * 1.4) * data.drift.z
+        );
+        squareMatrixObject.rotation.set(
+          data.rotation.x + time * data.speed * data.spin.x + Math.sin(time * 0.71 + data.phase) * 0.55,
+          data.rotation.y + time * data.speed * data.spin.y + Math.cos(time * 0.63 + data.phase * 1.2) * 0.5,
+          data.rotation.z + time * data.speed * data.spin.z + Math.sin(time * 0.83 + data.phase * 0.7) * 0.65
+        );
+        squareMatrixObject.scale.setScalar(data.scale * pulse * (isOverviewScreen ? 0.62 : 0.82));
+        squareMatrixObject.updateMatrix();
+        mesh.setMatrixAt(instanceIndex, squareMatrixObject.matrix);
+        instanceIndex++;
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    });
+
     if (energyRef.current) {
       const posAttr = energyRef.current.geometry.attributes.position;
       for (let i = 0; i < energyCount; i++) {
         const ix = i * 3;
         const t = energyOrder[i];
-        const wave = Math.sin(time * (1.2 + intensity) + t * 28 + (i % 9)) * (0.08 + intensity * 0.22);
-        const lift = ((time * (0.08 + intensity * 0.12) + t) % 1) * 0.9;
+        const wave = Math.sin(time * (1.6 + intensity) + t * 34 + (i % 9)) * (0.12 + intensity * 0.3);
+        const lift = ((time * (0.14 + intensity * 0.22) + t) % 1) * 1.35;
         posAttr.array[ix] = energyInitial[ix] + wave;
         posAttr.array[ix + 1] = energyInitial[ix + 1] + lift;
-        posAttr.array[ix + 2] = energyInitial[ix + 2] + Math.cos(time + t * 17) * 0.08;
+        posAttr.array[ix + 2] = energyInitial[ix + 2] + Math.cos(time + t * 19) * 0.14;
       }
       posAttr.needsUpdate = true;
     }
@@ -784,10 +1109,17 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
             array={positions}
             itemSize={3}
           />
+          <bufferAttribute
+            attach="attributes-color"
+            count={count}
+            array={particleColors}
+            itemSize={3}
+          />
         </bufferGeometry>
         <pointsMaterial
           size={0.035}
-          color="#22d3ee"
+          color="#ffffff"
+          vertexColors
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -804,10 +1136,17 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
             array={leafPositions}
             itemSize={3}
           />
+          <bufferAttribute
+            attach="attributes-color"
+            count={leafCount}
+            array={leafColors}
+            itemSize={3}
+          />
         </bufferGeometry>
         <pointsMaterial
           size={0.055}
-          color="#b7f7a5"
+          color="#ffffff"
+          vertexColors
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -848,6 +1187,28 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         />
       </instancedMesh>
 
+      {["#2dd4bf", "#22d3ee", "#bef264", "#38bdf8", "#c084fc"].map((color, index) => (
+        <instancedMesh
+          key={`idle-block-${color}`}
+          ref={(mesh) => {
+            idleBlockRefs.current[index] = mesh;
+          }}
+          args={[undefined, undefined, Math.ceil(idleBlockData.length / 5)]}
+        >
+          <boxGeometry args={[1, 1, 0.34]} />
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={0}
+            side={THREE.DoubleSide}
+            depthTest={false}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </instancedMesh>
+      ))}
+
       <points ref={energyRef}>
         <bufferGeometry>
           <bufferAttribute
@@ -859,7 +1220,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         </bufferGeometry>
         <pointsMaterial
           size={0.045}
-          color="#67e8f9"
+          color="#fef08a"
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -879,7 +1240,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         </bufferGeometry>
         <pointsMaterial
           size={0.07}
-          color="#f0fdfa"
+          color="#ecfccb"
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -920,7 +1281,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           />
         </bufferGeometry>
         <lineBasicMaterial
-          color="#93c5fd"
+          color="#fef9c3"
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -938,7 +1299,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           />
         </bufferGeometry>
         <lineBasicMaterial
-          color="#5eead4"
+          color="#86efac"
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -954,9 +1315,16 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
             array={fiberPositions}
             itemSize={3}
           />
+          <bufferAttribute
+            attach="attributes-color"
+            count={fiberColors.length / 3}
+            array={fiberColors}
+            itemSize={3}
+          />
         </bufferGeometry>
         <lineBasicMaterial
-          color="#dbeafe"
+          color="#ffffff"
+          vertexColors
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -972,9 +1340,16 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
             array={rootFiberPositions}
             itemSize={3}
           />
+          <bufferAttribute
+            attach="attributes-color"
+            count={rootFiberColors.length / 3}
+            array={rootFiberColors}
+            itemSize={3}
+          />
         </bufferGeometry>
         <lineBasicMaterial
           color="#ecfccb"
+          vertexColors
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -986,12 +1361,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         {shardData.map((data, i) => (
           <mesh key={i} position={data.position} rotation={data.rotation} scale={data.scale}>
             <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial 
-              color="#22d3ee" 
-              emissive="#22d3ee" 
-              emissiveIntensity={1} 
-              transparent 
-              opacity={0} 
+            <meshStandardMaterial
+              color="#bef264"
+              emissive="#bef264"
+              emissiveIntensity={1}
+              transparent
+              opacity={0}
             />
           </mesh>
         ))}
