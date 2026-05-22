@@ -659,6 +659,7 @@ export default function App() {
     const clampedIntensity = Math.max(0, Math.min(1, nextIntensity));
     intensityRef.current = clampedIntensity;
     setIntensity(clampedIntensity);
+    setVisualMode('tree');
     setMode(nextMode);
     if (nextMode !== 'idle') {
       treeTriggeredRef.current = true;
@@ -668,6 +669,7 @@ export default function App() {
     }
     syncToFirebase({
       mode: nextMode,
+      visualMode: 'tree',
       intensity: clampedIntensity,
       treeGrowth: treeGrowthRef.current,
       gestureActive,
@@ -756,8 +758,9 @@ export default function App() {
 
     if ((command.command === 'setMode' || command.command === 'setInteractionMode') && typeof value === 'string') {
       if (value === 'idle' || value === 'interaction' || value === 'flow' || value === 'climax') {
+        setVisualMode('tree');
         setMode(value);
-        syncToFirebase({ mode: value });
+        syncToFirebase({ mode: value, visualMode: 'tree' });
       }
     } else if (command.command === 'setIntensity' && typeof value === 'number') {
       const next = Math.max(0, Math.min(1, value));
