@@ -627,10 +627,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     addScreenBranch('C1', -1, 5.6, 16);
     addScreenBranch('C2', -1, 4.2, 14);
-    addScreenBranch('G1', -1, 1.2, 14);
-    addScreenBranch('G2', -1, -1.2, 12);
-    addScreenBranch('H1', 1, 1.2, 14);
-    addScreenBranch('H2', 1, -1.2, 12);
+    addScreenBranch('L1', -1, 1.2, 14);
+    addScreenBranch('L2', -1, -1.2, 12);
+    addScreenBranch('R1', 1, 1.2, 14);
+    addScreenBranch('R2', 1, -1.2, 12);
 
     return [pos, order, colors];
   }, []);

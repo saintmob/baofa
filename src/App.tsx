@@ -17,6 +17,7 @@ import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
   SCREEN_LAYOUT_ITEMS,
+  SHOW_SCREEN_LAYOUT_ITEMS,
   STAGE_BOUNDS,
   getNearestScreenId,
   getScreenDisplayId,
@@ -199,7 +200,7 @@ export default function App() {
   const [showGestureProgress, setShowGestureProgress] = useState(false);
   const [gestureStartPending, setGestureStartPending] = useState(false);
   const [gestureRoundLocked, setGestureRoundLocked] = useState(false);
-  const [standbyPromptReady, setStandbyPromptReady] = useState(true);
+  const [, setStandbyPromptReady] = useState(true);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
@@ -765,6 +766,10 @@ export default function App() {
       syncToFirebase({ intensity: next });
     } else if (command.command === 'resetTree') {
       resetTreeGrowth();
+    } else if (command.command === 'setVisualMode' && typeof value === 'string') {
+      if (value === 'tree' || value === 'firework') {
+        setVisualMode(value);
+      }
     } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
       handleScreenChange(value);
     } else if (command.command === 'pulseScreen') {
@@ -797,14 +802,14 @@ export default function App() {
   useEffect(() => {
     showControlRef.current?.publishState({
       status: 'online',
-      screenTopology: SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
-      screenRegistry: SCREEN_LAYOUT_ITEMS.map((screen, index) => ({
+      screenTopology: SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
+      screenRegistry: SHOW_SCREEN_LAYOUT_ITEMS.map((screen, index) => ({
         id: screen.id,
         label: `Screen ${getScreenDisplayId(screen.id)}`,
         enabled: true,
         physicalIndex: index + 1,
       })),
-      screenRoutes: Object.fromEntries(SCREEN_LAYOUT_ITEMS.map((screen) => [
+      screenRoutes: Object.fromEntries(SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => [
         screen.id,
         screenRoutes[screen.id] || {
           screenId: screen.id,
@@ -851,13 +856,6 @@ export default function App() {
   ]);
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-  const showStandbyPrompt =
-    treeGrowth <= 0 &&
-    gestureProgress <= 0 &&
-    !showGestureProgress &&
-    !gestureStartPending &&
-    !gestureRoundLocked &&
-    standbyPromptReady;
   const debugEnabled = screenPresentation.showDebug || (screenPresentation.showMenu && showWebGLDebug);
 
   if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
@@ -958,15 +956,6 @@ export default function App() {
       )}
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
-        {showStandbyPrompt && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-sm font-mono uppercase tracking-[0.32em] text-white/80">Click To Begin / 点击开始</div>
-              <div className="mt-3 text-[10px] font-mono tracking-[0.22em] text-cyan-300/60">Open camera and show palm to grow / 开启摄像头并张开手掌生长</div>
-            </div>
-          </div>
-        )}
-
         <AnimatePresence>
           {showGestureProgress && !treeTriggered && (
             <motion.div
@@ -1198,12 +1187,18 @@ export default function App() {
                 <Activity size={14} />
                 <span>WebGL Debug / 调试</span>
               </div>
-              <button
-                onClick={() => setShowWebGLDebug(false)}
-                className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
-              >
-                Off
-              </button>
+              {screenPresentation.showDebug ? (
+                <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
+                  4300
+                </span>
+              ) : (
+                <button
+                  onClick={() => setShowWebGLDebug(false)}
+                  className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
+                >
+                  Off
+                </button>
+              )}
             </div>
 
             {webglStats ? (

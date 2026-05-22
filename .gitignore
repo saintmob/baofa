@@ -6,3 +6,4 @@ coverage/
 *.log
 .env*
 firebase-applet-config.json
+tasks/

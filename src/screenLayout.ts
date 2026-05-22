@@ -18,7 +18,7 @@ export const STAGE_BOUNDS = {
 };
 
 export const MASTER_SCREEN: ScreenLayoutItem = {
-  id: 'MASTER',
+  id: 'A1',
   displayId: 'A1',
   col: 5.5,
   row: 0.7,
@@ -42,18 +42,21 @@ export const SCREEN_LAYOUT_ITEMS: ScreenLayoutItem[] = [
   { id: 'D3', col: 6.8, row: 3.35 },
   { id: 'E1', col: 5.5, row: 4.35, width: 1.15 },
   { id: 'F1', col: 5.5, row: 5.55, width: 1.2 },
-  { id: 'G1', col: 0.95, row: 4.2, height: 0.82 },
-  { id: 'G2', col: 0.95, row: 5.4, height: 0.82 },
-  { id: 'H1', col: 10.05, row: 4.2, height: 0.82 },
-  { id: 'H2', col: 10.05, row: 5.4, height: 0.82 },
+  { id: 'L1', col: 0.95, row: 4.2, height: 0.82 },
+  { id: 'L2', col: 0.95, row: 5.4, height: 0.82 },
+  { id: 'R1', col: 10.05, row: 4.2, height: 0.82 },
+  { id: 'R2', col: 10.05, row: 5.4, height: 0.82 },
 ];
+
+export const SHOW_SCREEN_LAYOUT_ITEMS = [MASTER_SCREEN, ...SCREEN_LAYOUT_ITEMS];
 
 export const SCREEN_LAYOUT: Record<string, ScreenLayoutItem> = {
   MASTER: MASTER_SCREEN,
+  A1: MASTER_SCREEN,
   ...Object.fromEntries(SCREEN_LAYOUT_ITEMS.map((screen) => [screen.id, screen])),
 };
 
-export const ALL_SCREEN_LAYOUT_ITEMS = [MASTER_SCREEN, ...SCREEN_LAYOUT_ITEMS];
+export const ALL_SCREEN_LAYOUT_ITEMS = SHOW_SCREEN_LAYOUT_ITEMS;
 
 const WORLD_CELL_SIZE = {
   x: 5.8,
