@@ -4,11 +4,12 @@ import { useHandTracking } from './hooks/useHandTracking';
 import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer } from '@react-three/postprocessing';
+import { LegacyFireworkScene } from './components/Visuals/LegacyFireworkScene';
 import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, Music2, RotateCcw } from 'lucide-react';
+import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, Music2, RotateCcw, Sparkles } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
@@ -100,6 +101,7 @@ type WebGLStats = {
 };
 
 type TreePhase = 'idle' | 'growing' | 'bright' | 'fading';
+type VisualMode = 'tree' | 'firework';
 
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
   const { gl, size } = useThree();
@@ -172,6 +174,7 @@ export default function App() {
   const [screenId, setScreenId] = useState(getInitialScreenId);
   const [isMaster, setIsMaster] = useState(() => localStorage.getItem('baofa-role') === 'master');
   const [isOverview, setIsOverview] = useState(() => localStorage.getItem('baofa-view') === 'overview');
+  const [visualMode, setVisualMode] = useState<VisualMode>(() => localStorage.getItem('baofa-visual-mode') === 'firework' ? 'firework' : 'tree');
   const [showScreenPanel, setShowScreenPanel] = useState(true);
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
@@ -544,6 +547,10 @@ export default function App() {
     localStorage.setItem('baofa-view', isOverview ? 'overview' : 'screen');
   }, [isOverview]);
 
+  useEffect(() => {
+    localStorage.setItem('baofa-visual-mode', visualMode);
+  }, [visualMode]);
+
   const resetTreeGrowth = () => {
     if (gestureStartTimeoutRef.current) {
       window.clearTimeout(gestureStartTimeoutRef.current);
@@ -673,19 +680,29 @@ export default function App() {
       <div className="absolute inset-0 z-0 pointer-events-none">
         <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
           <ambientLight intensity={0.45} />
-          <ParticleScene
-            audioData={audioData}
-            interactionPoint={interactionPoint}
-            mode={evolution > 0.8 ? 'climax' : mode}
-            intensity={intensity}
-            screenId={isOverview ? 'OVERVIEW' : isMaster ? 'MASTER' : screenId}
-            treeGrowth={treeGrowth}
-            gestureActive={gestureActive}
-            pulseSource={screenPulse?.source}
-            pulseTime={screenPulse?.timestamp}
-            isStarted={treeGrowth > 0 || mode === 'interaction'}
-            isPaused={false}
-          />
+          {visualMode === 'firework' ? (
+            <LegacyFireworkScene
+              audioData={audioData}
+              interactionPoint={interactionPoint}
+              mode={evolution > 0.8 ? 'climax' : mode}
+              intensity={intensity}
+              isPaused={false}
+            />
+          ) : (
+            <ParticleScene
+              audioData={audioData}
+              interactionPoint={interactionPoint}
+              mode={evolution > 0.8 ? 'climax' : mode}
+              intensity={intensity}
+              screenId={isOverview ? 'OVERVIEW' : isMaster ? 'MASTER' : screenId}
+              treeGrowth={treeGrowth}
+              gestureActive={gestureActive}
+              pulseSource={screenPulse?.source}
+              pulseTime={screenPulse?.timestamp}
+              isStarted={treeGrowth > 0 || mode === 'interaction'}
+              isPaused={false}
+            />
+          )}
           {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
           <EffectComposer>
             <Bloom
@@ -778,6 +795,19 @@ export default function App() {
             title="WebGL debug"
           >
             <Activity size={18} />
+          </button>
+          <button
+            onClick={() => setVisualMode((value) => value === 'tree' ? 'firework' : 'tree')}
+            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
+              visualMode === 'firework'
+                ? 'border-fuchsia-300/50 bg-fuchsia-300/15 text-fuchsia-100'
+                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
+            }`}
+            title={visualMode === 'firework' ? 'Firework particle scene on' : 'Tree particle scene on'}
+            aria-pressed={visualMode === 'firework'}
+          >
+            <Sparkles size={15} />
+            {visualMode === 'firework' ? 'Firework' : 'Tree'}
           </button>
           <button
             onPointerDown={(event) => event.stopPropagation()}
