@@ -11,9 +11,31 @@ export type ScreenRoute = {
   source?: string;
 };
 
-export async function fetchScreenRoutes(signal?: AbortSignal): Promise<Record<string, ScreenRoute>> {
+export type ScreenPresentation = {
+  autoRedirect: boolean;
+  showDebug: boolean;
+  showMenu: boolean;
+};
+
+export async function fetchScreenState(signal?: AbortSignal): Promise<{
+  routes: Record<string, ScreenRoute>;
+  presentation: ScreenPresentation;
+}> {
   const response = await fetch(`${SHOW_BACKEND_URL}/api/state`, { signal });
   if (!response.ok) throw new Error(`Show API state failed: ${response.status}`);
   const state = await response.json();
-  return state?.modules?.interaction?.screenRoutes || {};
+  const presentation = state?.modules?.interaction?.screenPresentation || {};
+  return {
+    routes: state?.modules?.interaction?.screenRoutes || {},
+    presentation: {
+      autoRedirect: typeof presentation.autoRedirect === 'boolean' ? presentation.autoRedirect : true,
+      showDebug: typeof presentation.showDebug === 'boolean' ? presentation.showDebug : false,
+      showMenu: typeof presentation.showMenu === 'boolean' ? presentation.showMenu : false,
+    },
+  };
+}
+
+export async function fetchScreenRoutes(signal?: AbortSignal): Promise<Record<string, ScreenRoute>> {
+  const state = await fetchScreenState(signal);
+  return state.routes;
 }

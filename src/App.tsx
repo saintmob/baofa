@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
 import { BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
-import { fetchScreenRoutes, type ScreenRoute } from './lib/screenRoutes';
+import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, RotateCcw, Route } from 'lucide-react';
 import {
@@ -60,6 +60,13 @@ function getScreenFromPointer(clientX: number, clientY: number, rect: DOMRect, f
 
   return getNearestScreenId(col, row, fallback);
 }
+
+const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; label: string; intensity: number }> = [
+  { mode: 'idle', label: 'Calm / 静止', intensity: 0.08 },
+  { mode: 'flow', label: 'Flow / 流动', intensity: 0.42 },
+  { mode: 'interaction', label: 'Pulse / 脉冲', intensity: 0.72 },
+  { mode: 'climax', label: 'Climax / 高潮', intensity: 1 },
+];
 
 function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
   const width = screen.width ?? 0.78;
@@ -164,9 +171,13 @@ export default function App() {
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
-  const [showWebGLDebug, setShowWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
   const [screenRoute, setScreenRoute] = useState<ScreenRoute | null>(null);
+  const [screenPresentation, setScreenPresentation] = useState<ScreenPresentation>({
+    autoRedirect: true,
+    showDebug: false,
+    showMenu: false,
+  });
   const [screenRouteError, setScreenRouteError] = useState('');
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
@@ -312,14 +323,14 @@ export default function App() {
   }, [routeScreenId]);
 
   useEffect(() => {
-    if (!isKnownScreenId(routeScreenId)) return;
     const controller = new AbortController();
     let timer = 0;
 
     const loadRoute = async () => {
       try {
-        const routes = await fetchScreenRoutes(controller.signal);
-        setScreenRoute(routes[routeScreenId] || null);
+        const { routes, presentation } = await fetchScreenState(controller.signal);
+        setScreenRoute(isKnownScreenId(routeScreenId) ? routes[routeScreenId] || null : null);
+        setScreenPresentation(presentation);
         setScreenRouteError('');
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -335,6 +346,14 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [routeScreenId]);
+
+  useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    if (!screenRoute || screenRoute.owner === 'baofa' || !screenPresentation.autoRedirect) return;
+    if (screenRoute.owner === 'vj') {
+      window.location.replace(screenRoute.url || getVjScreenUrl(routeScreenId));
+    }
+  }, [routeScreenId, screenPresentation.autoRedirect, screenRoute]);
 
   useEffect(() => {
     localStorage.setItem('baofa-role', isMaster ? 'master' : 'screen');
@@ -354,6 +373,25 @@ export default function App() {
     setIntensity(0.08);
     setMode('idle');
     syncToFirebase({ treeGrowth: 0, gestureActive: false, intensity: 0.08, mode: 'idle' });
+  };
+
+  const applyEffectMode = (nextMode: 'idle' | 'interaction' | 'flow' | 'climax', nextIntensity: number) => {
+    const clampedIntensity = Math.max(0, Math.min(1, nextIntensity));
+    intensityRef.current = clampedIntensity;
+    setIntensity(clampedIntensity);
+    setMode(nextMode);
+    if (nextMode !== 'idle') {
+      treeTriggeredRef.current = true;
+      treeGrowthRef.current = Math.max(treeGrowthRef.current, nextMode === 'climax' ? 0.82 : 0.24);
+      setTreeTriggered(true);
+      setTreeGrowth(treeGrowthRef.current);
+    }
+    syncToFirebase({
+      mode: nextMode,
+      intensity: clampedIntensity,
+      treeGrowth: treeGrowthRef.current,
+      gestureActive,
+    });
   };
 
   const handleScreenChange = (id: string) => {
@@ -499,6 +537,7 @@ export default function App() {
       screenPulse,
       audioStarted: isStarted,
       firebaseStatus: connectionStatus,
+      screenPresentation,
     });
   }, [
     connectionStatus,
@@ -511,6 +550,7 @@ export default function App() {
     mode,
     screenId,
     screenPulse,
+    screenPresentation,
     treeGrowth,
   ]);
 
@@ -532,6 +572,9 @@ export default function App() {
             <ExternalLink size={14} />
             Open VJ screen / 打开 VJ 屏
           </a>
+          {screenPresentation.autoRedirect && (
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">Redirecting automatically / 自动跳转中</div>
+          )}
           {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
         </div>
       </div>
@@ -561,7 +604,7 @@ export default function App() {
             isStarted={treeGrowth > 0 || mode === 'interaction'}
             isPaused={false}
           />
-          {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
+          {screenPresentation.showDebug && <WebGLDebugProbe onStats={setWebglStats} />}
           <EffectComposer>
             <Bloom intensity={1.15 + intensity * 1.75} luminanceThreshold={0.18} luminanceSmoothing={0.92} />
           </EffectComposer>
@@ -595,15 +638,7 @@ export default function App() {
       )}
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
-        {!isStarted && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-sm font-mono uppercase tracking-[0.32em] text-white/80">Click To Begin / 点击开始</div>
-              <div className="mt-3 text-[10px] font-mono tracking-[0.22em] text-cyan-300/60">Open camera and show palm to grow / 开启摄像头并张开手掌生长</div>
-            </div>
-          </div>
-        )}
-
+        {screenPresentation.showMenu && (
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={() => isCameraActive ? stopCamera() : startCamera()}
@@ -619,14 +654,6 @@ export default function App() {
           >
             <MonitorCog size={18} />
           </button>
-          <button
-            onClick={() => setShowWebGLDebug((value) => !value)}
-            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${showWebGLDebug ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
-            title="WebGL debug"
-          >
-            <Activity size={18} />
-          </button>
-
           {isCameraActive && (
             <motion.div
               initial={{ opacity: 0, x: -10 }}
@@ -646,9 +673,10 @@ export default function App() {
             </motion.div>
           )}
         </div>
+        )}
 
         <AnimatePresence>
-          {showScreenPanel && (
+          {screenPresentation.showMenu && showScreenPanel && (
             <motion.div
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -720,6 +748,22 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {effectModes.map((effect) => (
+                  <button
+                    key={effect.mode}
+                    onClick={() => applyEffectMode(effect.mode, effect.intensity)}
+                    className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                      mode === effect.mode
+                        ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
+                        : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                    }`}
+                  >
+                    {effect.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="mt-4 flex justify-end">
                 <button
                   onClick={resetTreeGrowth}
@@ -745,7 +789,7 @@ export default function App() {
       )}
 
       <AnimatePresence>
-        {showWebGLDebug && (
+        {screenPresentation.showDebug && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -758,12 +802,7 @@ export default function App() {
                 <Activity size={14} />
                 <span>WebGL Debug / 调试</span>
               </div>
-              <button
-                onClick={() => setShowWebGLDebug(false)}
-                className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
-              >
-                Off
-              </button>
+              <span className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/35">4300</span>
             </div>
 
             {webglStats ? (
@@ -786,6 +825,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {(screenPresentation.showMenu || screenPresentation.showDebug) && (
       <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none z-50">
         <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
           showControlStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-gray-900/50 border-white/5 text-white/30'
@@ -805,6 +845,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
