@@ -2,13 +2,16 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
+import dotenv from "dotenv";
+import { APP_PORT } from "./src/lib/runtimeConfig";
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
 
   // API health check
   app.get("/api/health", (req, res) => {
@@ -18,7 +21,14 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        host: "0.0.0.0",
+        port: APP_PORT,
+        strictPort: true,
+        hmr: false,
+        ws: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -34,8 +44,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(APP_PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${APP_PORT}`);
   });
 }
 

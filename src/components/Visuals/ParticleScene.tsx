@@ -203,7 +203,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         order[i] = 0.7 + Math.random() * 0.3;
         colorMix = 0.78 + Math.random() * 0.22;
       }
-      
+
       pos[i * 3] = init[i * 3] = x;
       pos[i * 3 + 1] = init[i * 3 + 1] = y;
       pos[i * 3 + 2] = init[i * 3 + 2] = z;
@@ -627,10 +627,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     addScreenBranch('C1', -1, 5.6, 16);
     addScreenBranch('C2', -1, 4.2, 14);
-    addScreenBranch('G1', -1, 1.2, 14);
-    addScreenBranch('G2', -1, -1.2, 12);
-    addScreenBranch('H1', 1, 1.2, 14);
-    addScreenBranch('H2', 1, -1.2, 12);
+    addScreenBranch('L1', -1, 1.2, 14);
+    addScreenBranch('L2', -1, -1.2, 12);
+    addScreenBranch('R1', 1, 1.2, 14);
+    addScreenBranch('R2', 1, -1.2, 12);
 
     return [pos, order, colors];
   }, []);
@@ -745,7 +745,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
   useFrame((state, delta) => {
     if (isPaused) return;
-    
+
     const time = state.clock.getElapsedTime();
     if (interactionPoint && mode === 'interaction') {
       ripplePhaseRef.current = Math.min(1, ripplePhaseRef.current + delta * 1.25);
@@ -775,7 +775,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const bloomPhase = visibleGrowth > 0.985 ? THREE.MathUtils.smoothstep(intensity, 0.48, 0.98) : 0;
     const bloomColor = tempoColor.clone().lerp(new THREE.Color("#ffffff"), 0.18);
     const particleSurge = 1 + bloomPhase * 0.42;
-    
+
     // Update appearance stats
     if (pointsRef.current) {
       const mat = pointsRef.current.material as THREE.PointsMaterial;
@@ -795,7 +795,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       mat.opacity = opacityRef.current * previewBrightness;
       mat.visible = opacityRef.current > 0.0001;
 
-      // Color Spectrum Shift 
+      // Color Spectrum Shift
       const c1 = new THREE.Color("#4ade80");
       const c2 = new THREE.Color("#bef264");
       const c3 = new THREE.Color("#fef08a");
@@ -808,7 +808,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         colorRef.current.copy(c3).lerp(c4, (intensity - 0.8) / 0.2);
       }
       mat.color.copy(c4).lerp(bloomColor, bloomPhase * 0.88);
-      
+
       // Sync shard appearance with stronger emissive sync
       if (leafRef.current) {
         const leafMat = leafRef.current.material as THREE.PointsMaterial;
@@ -889,7 +889,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         });
       }
     }
-    
+
     if (pointsRef.current) {
       const posAttr = pointsRef.current.geometry.attributes.position;
       const mat = pointsRef.current.material as THREE.PointsMaterial;
@@ -908,7 +908,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         const audioValue = Math.abs(audioData[audioIdx]) * 3.0;
         const reveal = THREE.MathUtils.smoothstep(visibleGrowth + 0.03, growthOrder[i], growthOrder[i] + 0.12);
         const pulse = (gestureActive ? 0.032 : 0.012) + audioValue * 0.01;
-        
+
         // Before the tree grows, a click on one screen propagates through every screen area.
         if (mode === 'interaction' && visibleGrowth <= 0.001 && sourceLayout) {
           screenCenters.forEach(({ layout, point }) => {
@@ -1361,12 +1361,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         {shardData.map((data, i) => (
           <mesh key={i} position={data.position} rotation={data.rotation} scale={data.scale}>
             <boxGeometry args={[1, 1, 1]} />
-            <meshStandardMaterial 
-              color="#bef264" 
-              emissive="#bef264" 
-              emissiveIntensity={1} 
-              transparent 
-              opacity={0} 
+            <meshStandardMaterial
+              color="#bef264"
+              emissive="#bef264"
+              emissiveIntensity={1}
+              transparent
+              opacity={0}
             />
           </mesh>
         ))}

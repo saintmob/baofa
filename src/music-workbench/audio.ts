@@ -63,7 +63,7 @@ const parsePattern = (str: string) => {
     if (char === 'S') return { drum: 'snare' };
     if (char === 'H') return { drum: 'hihat' };
     if (char === 'C') return { drum: 'clap' };
-    
+
     if (char === 'X') return { exp: 'glitch' };
     if (char === 'Y') return { exp: 'laser' };
     if (char === 'Z') return { exp: 'animal' };
@@ -97,7 +97,7 @@ export const AVAILABLE_SOUNDS: SoundDef[] = [
   { id: 'b13', name: 'Drill Hats', category: 'beat', color: 'bg-red-500', pattern: parsePattern('K.HHS.HHK.HHS.HH') },
   { id: 'b14', name: 'Dubstep Half', category: 'beat', color: 'bg-red-500', pattern: parsePattern('K.......S...K...') },
   { id: 'b15', name: 'Afro R&B', category: 'beat', color: 'bg-red-500', pattern: parsePattern('K.H..HS.K.H.S.H.') },
-  
+
   // Effects
   { id: 'e1', name: 'Shaker', category: 'effect', color: 'bg-orange-500', pattern: parsePattern('H.H.H.H.H.H.H.H.') },
   { id: 'e2', name: 'Offbeat', category: 'effect', color: 'bg-orange-500', pattern: parsePattern('..H...H...H...H.') },
@@ -257,7 +257,7 @@ export class SlotChannel {
     this.comp = ctx.createDynamicsCompressor();
     this.lpf = ctx.createBiquadFilter(); this.lpf.type = 'lowpass'; this.lpf.frequency.value = 20000;
     this.hpf = ctx.createBiquadFilter(); this.hpf.type = 'highpass'; this.hpf.frequency.value = 10;
-    
+
     // Flanger
     const flangerSplit = ctx.createGain();
     this.flangerDelay = ctx.createDelay(0.01); this.flangerDelay.delayTime.value = 0.003;
@@ -267,7 +267,7 @@ export class SlotChannel {
     flangerDepth.connect(this.flangerDelay.delayTime);
     this.flangerMix = ctx.createGain(); this.flangerMix.gain.value = 0;
     this.flangerLFO.start();
-    
+
     // Panner
     this.panner = ctx.createStereoPanner();
     this.pannerLFO = ctx.createOscillator(); this.pannerLFO.frequency.value = 0.5;
@@ -315,7 +315,7 @@ export class SlotChannel {
     delaySplit.connect(this.delay);
     this.delay.connect(this.delayMix);
     this.delayMix.connect(this.sidechainGain);
-    
+
     delaySplit.connect(this.convolver);
     this.convolver.connect(this.reverbMix);
     this.reverbMix.connect(this.sidechainGain);
@@ -336,7 +336,7 @@ export class SlotChannel {
     const time = this.outGain.context.currentTime;
     this.outGain.gain.setTargetAtTime(p.volume / 100, time, 0.05);
 
-    const lpfFreq = 200 * Math.pow(100, p.lpf / 100); 
+    const lpfFreq = 200 * Math.pow(100, p.lpf / 100);
     this.lpf.frequency.setTargetAtTime(lpfFreq, time, 0.05);
 
     const hpfFreq = 10 * Math.pow(500, p.hpf / 100);
@@ -349,7 +349,7 @@ export class SlotChannel {
     this.pannerGain.gain.setTargetAtTime(p.panSwing / 100, time, 0.05);
     this.delayMix.gain.setTargetAtTime(p.delay / 100, time, 0.05);
     this.reverbMix.gain.setTargetAtTime(p.reverb / 100, time, 0.05);
-    
+
     this.scDepth.gain.setTargetAtTime(p.sidechain / 100, time, 0.05);
     this.pitchShift = p.pitch;
   }
@@ -525,7 +525,7 @@ export class ProjectEngine {
     const ctx = this.ctx;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    
+
     const gain = ctx.createGain();
     source.connect(gain);
     gain.connect(this.channels[channelIndex].input);
@@ -540,11 +540,11 @@ export class ProjectEngine {
       gain.gain.linearRampToValueAtTime(0, time + duration);
       source.start(time, 0, duration * rateMultiplier);
     } else {
-      const measureDuration = 2.0; 
+      const measureDuration = 2.0;
       gain.gain.setValueAtTime(1, time);
       gain.gain.setValueAtTime(1, time + measureDuration - 0.05);
       gain.gain.linearRampToValueAtTime(0, time + measureDuration);
-      source.start(time, 0, measureDuration * rateMultiplier); 
+      source.start(time, 0, measureDuration * rateMultiplier);
     }
   }
 
@@ -576,7 +576,7 @@ export class ProjectEngine {
     const ctx = this.ctx;
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    
+
     const gain = ctx.createGain();
     source.connect(gain);
     gain.connect(this.channels[channelIndex].input);
@@ -1001,7 +1001,7 @@ export class ProjectEngine {
     gain.connect(this.channels[channelIndex].input);
     const shift = this.channels[channelIndex].pitchShift;
     const rateMultiplier = Math.pow(2, shift / 12);
-    
+
     if (type === 'glitch') {
       const osc = ctx.createOscillator();
       osc.type = 'sawtooth';
@@ -1031,7 +1031,7 @@ export class ProjectEngine {
       mod.connect(modGain);
       modGain.gain.value = 100 * rateMultiplier;
       modGain.connect(osc.frequency);
-      
+
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(400 * rateMultiplier, time);
       osc.frequency.linearRampToValueAtTime(300 * rateMultiplier, time + 0.3);
@@ -1043,7 +1043,7 @@ export class ProjectEngine {
       osc.stop(time + 0.3);
       mod.stop(time + 0.3);
     } else if (type === 'train') {
-      const bufferSize = ctx.sampleRate * 0.1; 
+      const bufferSize = ctx.sampleRate * 0.1;
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -1083,7 +1083,7 @@ export class ProjectEngine {
       osc.start(time);
       osc.stop(time + 0.5);
     } else if (type === 'snare') {
-      const bufferSize = ctx.sampleRate * 0.2; 
+      const bufferSize = ctx.sampleRate * 0.2;
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -1100,7 +1100,7 @@ export class ProjectEngine {
       gain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
       noiseSource.start(time);
     } else if (type === 'hihat') {
-      const bufferSize = ctx.sampleRate * 0.05; 
+      const bufferSize = ctx.sampleRate * 0.05;
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -1117,7 +1117,7 @@ export class ProjectEngine {
       gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
       noiseSource.start(time);
     } else if (type === 'clap') {
-      const bufferSize = ctx.sampleRate * 0.15; 
+      const bufferSize = ctx.sampleRate * 0.15;
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -1152,10 +1152,10 @@ export class ProjectEngine {
 
     const shift = this.channels[channelIndex].pitchShift;
     const freq = 440 * Math.pow(2, (midiNote + shift - 69) / 12);
-    
+
     if (category === 'bass') {
       osc.type = 'square';
-      osc.frequency.value = freq / 2; 
+      osc.frequency.value = freq / 2;
       filter.type = 'lowpass';
       filter.frequency.setValueAtTime(200, time);
       filter.frequency.exponentialRampToValueAtTime(800, time + 0.1);
@@ -1305,7 +1305,7 @@ export class GlobalEngineManager {
     const bpm = this.detectBPM(buffer);
     const targetBPM = 120;
     const ratio = targetBPM / bpm;
-    
+
     const offset = this.findFirstBeat(buffer);
     const stretched = this.applyWSOLA(buffer, ratio, offset);
     return this.clipToMeasure(stretched, 2.0);
@@ -1314,15 +1314,15 @@ export class GlobalEngineManager {
   private detectBPM(buffer: AudioBuffer): number {
     const data = buffer.getChannelData(0);
     const sampleRate = buffer.sampleRate;
-    
+
     const partSize = sampleRate / 2; // 0.5s chunks
     const peaks = [];
-    
+
     let max = 0;
     for (let i = 0; i < data.length; i++) {
       if (Math.abs(data[i]) > max) max = Math.abs(data[i]);
     }
-    
+
     const threshold = max * 0.7;
     for (let i = 0; i < data.length; i += partSize) {
       let partMax = 0;
@@ -1337,20 +1337,20 @@ export class GlobalEngineManager {
         peaks.push(partPeakIdx);
       }
     }
-    
+
     if (peaks.length < 2) return 120; // fallback
-    
+
     const intervals = [];
     for (let i = 1; i < peaks.length; i++) {
       intervals.push(peaks[i] - peaks[i-1]);
     }
-    
+
     const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     let bpm = 60 / (avgInterval / sampleRate);
-    
+
     while (bpm < 70) bpm *= 2;
     while (bpm > 180) bpm /= 2;
-    
+
     return Math.round(bpm);
   }
 
@@ -1367,11 +1367,11 @@ export class GlobalEngineManager {
     const ctx = this.ctx!;
     const sampleRate = buffer.sampleRate;
     const inputData = buffer.getChannelData(0);
-    
+
     const windowSize = Math.floor(sampleRate * 0.05); // 50ms
     const hopOut = Math.floor(windowSize / 2);
     const hopIn = Math.floor(hopOut / ratio);
-    
+
     const outputLength = Math.floor(buffer.length * ratio);
     const outputData = new Float32Array(outputLength);
     const fadeOut = new Float32Array(windowSize);
@@ -1400,7 +1400,7 @@ export class GlobalEngineManager {
     const ctx = this.ctx!;
     const frameCount = Math.floor(seconds * buffer.sampleRate);
     const clipped = ctx.createBuffer(buffer.numberOfChannels, frameCount, buffer.sampleRate);
-    
+
     for (let i = 0; i < buffer.numberOfChannels; i++) {
       const data = buffer.getChannelData(i);
       const newData = clipped.getChannelData(i);

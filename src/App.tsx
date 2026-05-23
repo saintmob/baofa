@@ -8,12 +8,16 @@ import { LegacyFireworkScene } from './components/Visuals/LegacyFireworkScene';
 import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
+import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
+import { BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
+import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, LayoutGrid, MonitorCog, Music2, RotateCcw, Sparkles } from 'lucide-react';
+import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
   SCREEN_LAYOUT_ITEMS,
+  SHOW_SCREEN_LAYOUT_ITEMS,
   STAGE_BOUNDS,
   getNearestScreenId,
   getScreenDisplayId,
@@ -69,6 +73,13 @@ function getScreenFromPointer(clientX: number, clientY: number, rect: DOMRect, f
   return getNearestScreenId(col, row, fallback);
 }
 
+const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; label: string; intensity: number }> = [
+  { mode: 'idle', label: 'Calm / 静止', intensity: 0.08 },
+  { mode: 'flow', label: 'Flow / 流动', intensity: 0.42 },
+  { mode: 'interaction', label: 'Pulse / 脉冲', intensity: 0.72 },
+  { mode: 'climax', label: 'Climax / 高潮', intensity: 1 },
+];
+
 function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
   const width = screen.width ?? 0.78;
   const height = screen.height ?? 0.52;
@@ -83,6 +94,9 @@ function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
 }
 
 function getInitialScreenId() {
+  const screenMatch = window.location.pathname.match(/^\/screen\/([^/]+)/);
+  const routeScreenId = screenMatch ? decodeURIComponent(screenMatch[1]) : '';
+  if (isKnownScreenId(routeScreenId)) return routeScreenId;
   const saved = localStorage.getItem('baofa-screen-id');
   return isKnownScreenId(saved) ? saved! : DEFAULT_SCREEN_ID;
 }
@@ -154,7 +168,10 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
 }
 
 export default function App() {
+  const screenMatch = window.location.pathname.match(/^\/screen\/([^/]+)/);
+  const routeScreenId = screenMatch ? decodeURIComponent(screenMatch[1]) : '';
   const {
+    isStarted,
     addRandomSampleLayer,
     triggerScaleNote,
     fadeToSingleLayer,
@@ -183,11 +200,20 @@ export default function App() {
   const [showGestureProgress, setShowGestureProgress] = useState(false);
   const [gestureStartPending, setGestureStartPending] = useState(false);
   const [gestureRoundLocked, setGestureRoundLocked] = useState(false);
-  const [standbyPromptReady, setStandbyPromptReady] = useState(true);
+  const [, setStandbyPromptReady] = useState(true);
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
+  const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
+  const [screenRoute, setScreenRoute] = useState<ScreenRoute | null>(null);
+  const [screenRoutes, setScreenRoutes] = useState<Record<string, ScreenRoute>>({});
+  const [screenPresentation, setScreenPresentation] = useState<ScreenPresentation>({
+    autoRedirect: true,
+    showDebug: false,
+    showMenu: false,
+  });
+  const [screenRouteError, setScreenRouteError] = useState('');
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -209,6 +235,9 @@ export default function App() {
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
+  const showControlRef = useRef<ReturnType<typeof createShowControlClient> | null>(null);
+  const showControlClientIdRef = useRef(`baofa-${screenId}-${crypto.randomUUID().slice(0, 8)}`);
+  const showControlCommandRef = useRef<(command: ControlCommand) => void>(() => undefined);
   const useSampleLibraryRef = useRef(useSampleLibrary);
 
   useEffect(() => {
@@ -540,6 +569,47 @@ export default function App() {
   }, [screenId]);
 
   useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    setScreenId(routeScreenId);
+    setIsMaster(false);
+    setIsOverview(false);
+  }, [routeScreenId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer = 0;
+
+    const loadRoute = async () => {
+      try {
+        const { routes, presentation } = await fetchScreenState(controller.signal);
+        setScreenRoutes(routes);
+        setScreenRoute(isKnownScreenId(routeScreenId) ? routes[routeScreenId] || null : null);
+        setScreenPresentation(presentation);
+        setScreenRouteError('');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setScreenRouteError(error instanceof Error ? error.message : String(error));
+      }
+      timer = window.setTimeout(loadRoute, 2000);
+    };
+
+    void loadRoute();
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [routeScreenId]);
+
+  useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    if (!screenRoute || screenRoute.owner === 'baofa' || !screenPresentation.autoRedirect) return;
+    if (screenRoute.owner === 'vj') {
+      window.location.replace(screenRoute.url || getVjScreenUrl(routeScreenId));
+    }
+  }, [routeScreenId, screenPresentation.autoRedirect, screenRoute]);
+
+  useEffect(() => {
     localStorage.setItem('baofa-role', isMaster ? 'master' : 'screen');
   }, [isMaster]);
 
@@ -583,6 +653,27 @@ export default function App() {
     stopAllLayers();
     setMode('idle');
     syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+  };
+
+  const applyEffectMode = (nextMode: 'idle' | 'interaction' | 'flow' | 'climax', nextIntensity: number) => {
+    const clampedIntensity = Math.max(0, Math.min(1, nextIntensity));
+    intensityRef.current = clampedIntensity;
+    setIntensity(clampedIntensity);
+    setVisualMode('tree');
+    setMode(nextMode);
+    if (nextMode !== 'idle') {
+      treeTriggeredRef.current = true;
+      treeGrowthRef.current = Math.max(treeGrowthRef.current, nextMode === 'climax' ? 0.82 : 0.24);
+      setTreeTriggered(true);
+      setTreeGrowth(treeGrowthRef.current);
+    }
+    syncToFirebase({
+      mode: nextMode,
+      visualMode: 'tree',
+      intensity: clampedIntensity,
+      treeGrowth: treeGrowthRef.current,
+      gestureActive,
+    });
   };
 
   const handleScreenChange = (id: string) => {
@@ -661,14 +752,141 @@ export default function App() {
     }, 650);
   };
 
+  const applyShowControlCommand = useCallback((command: ControlCommand) => {
+    if (command.module && command.module !== 'interaction' && command.module !== 'show') return;
+    const value = command.value;
+
+    if ((command.command === 'setMode' || command.command === 'setInteractionMode') && typeof value === 'string') {
+      if (value === 'idle' || value === 'interaction' || value === 'flow' || value === 'climax') {
+        setVisualMode('tree');
+        setMode(value);
+        syncToFirebase({ mode: value, visualMode: 'tree' });
+      }
+    } else if (command.command === 'setIntensity' && typeof value === 'number') {
+      const next = Math.max(0, Math.min(1, value));
+      intensityRef.current = next;
+      setIntensity(next);
+      syncToFirebase({ intensity: next });
+    } else if (command.command === 'resetTree') {
+      resetTreeGrowth();
+    } else if (command.command === 'setVisualMode' && typeof value === 'string') {
+      if (value === 'tree' || value === 'firework') {
+        setVisualMode(value);
+      }
+    } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
+      handleScreenChange(value);
+    } else if (command.command === 'pulseScreen') {
+      const source = typeof value === 'string' && isKnownScreenId(value)
+        ? value
+        : isKnownScreenId(command.target)
+          ? command.target
+          : screenId;
+      const timestamp = Date.now();
+      setScreenPulse({ source, timestamp });
+      syncToFirebase({ screenPulse: { source, timestamp } });
+    }
+  }, [screenId, syncToFirebase]);
+
+  showControlCommandRef.current = applyShowControlCommand;
+
+  useEffect(() => {
+    showControlRef.current = createShowControlClient({
+      module: 'interaction',
+      clientId: showControlClientIdRef.current,
+      role: isMaster ? 'master' : isOverview ? 'overview' : 'screen',
+      capabilities: ['module.statePatch', 'control.command', 'interaction.topology', 'interaction.pulse'],
+      onStatus: setShowControlStatus,
+      onCommand: (command) => showControlCommandRef.current(command),
+    });
+
+    return () => showControlRef.current?.close();
+  }, []);
+
+  useEffect(() => {
+    showControlRef.current?.publishState({
+      status: 'online',
+      screenTopology: SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
+      screenRegistry: SHOW_SCREEN_LAYOUT_ITEMS.map((screen, index) => ({
+        id: screen.id,
+        label: `Screen ${getScreenDisplayId(screen.id)}`,
+        enabled: true,
+        physicalIndex: index + 1,
+      })),
+      screenRoutes: Object.fromEntries(SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => [
+        screen.id,
+        screenRoutes[screen.id] || {
+          screenId: screen.id,
+          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : 'baofa',
+          status: 'online',
+          source: 'baofa',
+          updatedAt: Date.now(),
+        },
+      ])),
+      screenId,
+      role: isMaster ? 'master' : 'screen',
+      overview: isOverview,
+      mode,
+      intensity,
+      treeGrowth,
+      gestureActive,
+      lastInteraction: interactionPoint
+        ? { x: interactionPoint.x, y: interactionPoint.y, z: interactionPoint.z, timestamp: Date.now() }
+        : null,
+      screenPulse,
+      audioStarted: isStarted,
+      firebaseStatus: connectionStatus,
+      screenPresentation,
+      visualMode,
+      useSampleLibrary,
+    });
+  }, [
+    connectionStatus,
+    gestureActive,
+    interactionPoint,
+    intensity,
+    isMaster,
+    isOverview,
+    isStarted,
+    mode,
+    screenId,
+    screenPulse,
+    screenPresentation,
+    screenRoute,
+    screenRoutes,
+    treeGrowth,
+    useSampleLibrary,
+    visualMode,
+  ]);
+
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-  const showStandbyPrompt =
-    treeGrowth <= 0 &&
-    gestureProgress <= 0 &&
-    !showGestureProgress &&
-    !gestureStartPending &&
-    !gestureRoundLocked &&
-    standbyPromptReady;
+  const debugEnabled = screenPresentation.showDebug || (screenPresentation.showMenu && showWebGLDebug);
+
+  if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
+    const targetUrl = screenRoute.url || getVjScreenUrl(routeScreenId);
+
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
+        <div className="flex max-w-md flex-col items-center gap-4 text-center">
+          <Route size={34} className="text-cyan-200/70" />
+          <div>
+            <div className="text-sm font-mono uppercase tracking-[0.24em] text-white/80">Screen routed to VJ / 已路由到 VJ</div>
+            <div className="mt-2 text-xs font-mono uppercase tracking-[0.18em] text-white/45">{routeScreenId}</div>
+          </div>
+          <a
+            href={targetUrl}
+            className="inline-flex h-10 items-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-4 text-[10px] font-mono uppercase tracking-widest text-cyan-100 hover:bg-cyan-300 hover:text-black"
+          >
+            <ExternalLink size={14} />
+            Open VJ screen / 打开 VJ 屏
+          </a>
+          {screenPresentation.autoRedirect && (
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">Redirecting automatically / 自动跳转中</div>
+          )}
+          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -703,7 +921,7 @@ export default function App() {
               isPaused={false}
             />
           )}
-          {showWebGLDebug && <WebGLDebugProbe onStats={setWebglStats} />}
+          {debugEnabled && <WebGLDebugProbe onStats={setWebglStats} />}
           <EffectComposer>
             <Bloom
               intensity={isOverview ? 0.48 + intensity * 0.72 : 1.45 + intensity * 2.35}
@@ -741,15 +959,6 @@ export default function App() {
       )}
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
-        {showStandbyPrompt && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-sm font-mono uppercase tracking-[0.32em] text-white/80">Click To Begin / 点击开始</div>
-              <div className="mt-3 text-[10px] font-mono tracking-[0.22em] text-cyan-300/60">Open camera and show palm to grow / 开启摄像头并张开手掌生长</div>
-            </div>
-          </div>
-        )}
-
         <AnimatePresence>
           {showGestureProgress && !treeTriggered && (
             <motion.div
@@ -774,6 +983,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {screenPresentation.showMenu && (
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={() => isCameraActive ? stopCamera() : startCamera()}
@@ -851,9 +1061,10 @@ export default function App() {
             </motion.div>
           )}
         </div>
+        )}
 
         <AnimatePresence>
-          {showScreenPanel && (
+          {screenPresentation.showMenu && showScreenPanel && (
             <motion.div
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -914,6 +1125,33 @@ export default function App() {
                 ))}
               </div>
 
+              <div className="mt-3 rounded border border-white/10 bg-white/[0.025] px-3 py-2 text-[9px] font-mono uppercase tracking-[0.16em] text-white/50">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Native baofa / 原生屏</span>
+                  <span className="text-cyan-200/70">{BAOFA_NATIVE_URL}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-3">
+                  <span>VJ external / 外部 VJ</span>
+                  <span className="text-cyan-200/70 break-all">{getVjScreenUrl(isMaster ? 'MASTER' : isOverview ? DEFAULT_SCREEN_ID : screenId)}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {effectModes.map((effect) => (
+                  <button
+                    key={effect.mode}
+                    onClick={() => applyEffectMode(effect.mode, effect.intensity)}
+                    className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                      mode === effect.mode
+                        ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
+                        : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                    }`}
+                  >
+                    {effect.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="mt-4 flex justify-end">
                 <button
                   onClick={resetTreeGrowth}
@@ -939,7 +1177,7 @@ export default function App() {
       )}
 
       <AnimatePresence>
-        {showWebGLDebug && (
+        {debugEnabled && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -952,12 +1190,18 @@ export default function App() {
                 <Activity size={14} />
                 <span>WebGL Debug / 调试</span>
               </div>
-              <button
-                onClick={() => setShowWebGLDebug(false)}
-                className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
-              >
-                Off
-              </button>
+              {screenPresentation.showDebug ? (
+                <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
+                  4300
+                </span>
+              ) : (
+                <button
+                  onClick={() => setShowWebGLDebug(false)}
+                  className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
+                >
+                  Off
+                </button>
+              )}
             </div>
 
             {webglStats ? (
@@ -980,7 +1224,13 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {(screenPresentation.showMenu || screenPresentation.showDebug) && (
       <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none z-50">
+        <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
+          showControlStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-gray-900/50 border-white/5 text-white/30'
+        }`}>
+          Show API / 总控: {showControlStatus}
+        </div>
         <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
           isCameraActive ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-gray-900/50 border-white/5 text-white/20'
         }`}>
@@ -994,6 +1244,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
