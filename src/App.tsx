@@ -186,12 +186,13 @@ export default function App() {
   const { isHandOpen, openHandCount, hasHandDetected, isCameraActive, cameraError, startCamera, stopCamera } = useHandTracking();
   const [audioData, setAudioData] = useState(new Float32Array(1024));
   const [interactionPoint, setInteractionPoint] = useState<THREE.Vector3 | null>(null);
+  const [fireworkScratchPoint, setFireworkScratchPoint] = useState<THREE.Vector3 | null>(null);
   const [mode, setMode] = useState<'idle' | 'interaction' | 'flow' | 'climax'>('idle');
   const [intensity, setIntensity] = useState(0.08);
   const [screenId, setScreenId] = useState(getInitialScreenId);
   const [isMaster, setIsMaster] = useState(() => localStorage.getItem('baofa-role') === 'master');
   const [isOverview, setIsOverview] = useState(() => localStorage.getItem('baofa-view') === 'overview');
-  const [visualMode, setVisualMode] = useState<VisualMode>(() => localStorage.getItem('baofa-visual-mode') === 'firework' ? 'firework' : 'tree');
+  const [visualMode, setVisualMode] = useState<VisualMode>('tree');
   const [showScreenPanel, setShowScreenPanel] = useState(false);
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
@@ -231,6 +232,7 @@ export default function App() {
   const lastFrameTimeRef = useRef<number | null>(null);
   const gestureStartTimeoutRef = useRef<number | null>(null);
   const standbyPromptTimeoutRef = useRef<number | null>(null);
+  const fireworkScratchTimeoutRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
@@ -546,6 +548,7 @@ export default function App() {
     return () => {
       if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
       if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
+      if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
     };
   }, []);
 
@@ -616,10 +619,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('baofa-view', isOverview ? 'overview' : 'screen');
   }, [isOverview]);
-
-  useEffect(() => {
-    localStorage.setItem('baofa-visual-mode', visualMode);
-  }, [visualMode]);
 
   const resetTreeGrowth = () => {
     if (gestureStartTimeoutRef.current) {
@@ -735,14 +734,24 @@ export default function App() {
   };
 
   const handleSplashPointerMove = (e: React.PointerEvent) => {
-    if (mode !== 'interaction') return;
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
-    setInteractionPoint(new THREE.Vector3(
+    const point = new THREE.Vector3(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
       0
-    ).multiplyScalar(14));
+    ).multiplyScalar(14);
+
+    if (visualMode === 'firework') {
+      setFireworkScratchPoint(point);
+      if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
+      fireworkScratchTimeoutRef.current = window.setTimeout(() => {
+        fireworkScratchTimeoutRef.current = null;
+        setFireworkScratchPoint(null);
+      }, 120);
+    }
+    if (mode !== 'interaction') return;
+    setInteractionPoint(point);
   };
 
   const handleSplashPointerUp = () => {
@@ -902,6 +911,7 @@ export default function App() {
             <LegacyFireworkScene
               audioData={audioData}
               interactionPoint={interactionPoint}
+              scratchPoint={fireworkScratchPoint}
               mode={evolution > 0.8 ? 'climax' : mode}
               intensity={intensity}
               isPaused={false}
