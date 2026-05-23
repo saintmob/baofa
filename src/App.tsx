@@ -816,7 +816,7 @@ export default function App() {
         screen.id,
         screenRoutes[screen.id] || {
           screenId: screen.id,
-          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : undefined,
+          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : 'baofa',
           status: 'online',
           source: 'baofa',
           updatedAt: Date.now(),
