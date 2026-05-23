@@ -18,7 +18,7 @@ interface SoundLayer {
 
 const MAX_LAYERS = 7;
 const PROJECT_ID = 'baofa-sound-layers';
-const SAMPLE_LIBRARY_STORAGE_KEY = 'baofa-use-sample-library';
+const SAMPLE_LIBRARY_STORAGE_KEY = 'baofa-use-sample-library-manual';
 const LIBRARY_SOUNDS = AVAILABLE_SOUNDS.filter((sound) => sound.category !== 'custom');
 const SCALE_NOTES = [293.66, 329.63, 369.99, 440, 493.88];
 
@@ -52,7 +52,7 @@ export function useAudio() {
   const [isStarted, setIsStarted] = useState(false);
   const [useSampleLibrary, setUseSampleLibraryState] = useState(() => {
     const saved = localStorage.getItem(SAMPLE_LIBRARY_STORAGE_KEY);
-    return saved === null ? true : saved !== 'false';
+    return saved === null ? false : saved === 'true';
   });
   const [evolution, setEvolution] = useState(0);
   const useSampleLibraryRef = useRef(useSampleLibrary);

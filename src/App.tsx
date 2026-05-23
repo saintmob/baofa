@@ -192,7 +192,7 @@ export default function App() {
   const [isMaster, setIsMaster] = useState(() => localStorage.getItem('baofa-role') === 'master');
   const [isOverview, setIsOverview] = useState(() => localStorage.getItem('baofa-view') === 'overview');
   const [visualMode, setVisualMode] = useState<VisualMode>(() => localStorage.getItem('baofa-visual-mode') === 'firework' ? 'firework' : 'tree');
-  const [showScreenPanel, setShowScreenPanel] = useState(true);
+  const [showScreenPanel, setShowScreenPanel] = useState(false);
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
   const [treeTriggered, setTreeTriggered] = useState(false);
@@ -994,8 +994,9 @@ export default function App() {
           </button>
           <button
             onClick={() => setShowScreenPanel((value) => !value)}
-            className="ml-3 p-3 rounded-full border border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10 transition-all duration-500 backdrop-blur-md"
+            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${showScreenPanel ? 'border-cyan-300/45 bg-cyan-300/12 text-cyan-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
             title="Screen routing"
+            aria-pressed={showScreenPanel}
           >
             <MonitorCog size={18} />
           </button>
