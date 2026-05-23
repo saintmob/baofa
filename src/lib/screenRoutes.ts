@@ -1,5 +1,8 @@
 import { SHOW_BACKEND_URL } from './runtimeConfig';
 
+const env = (import.meta as any).env || {};
+const controlToken = String(env.VITE_CONTROL_TOKEN || '');
+
 export type ScreenOwner = 'vj' | 'baofa' | 'off' | 'diagnostic';
 
 export type ScreenRoute = {
@@ -21,7 +24,9 @@ export async function fetchScreenState(signal?: AbortSignal): Promise<{
   routes: Record<string, ScreenRoute>;
   presentation: ScreenPresentation;
 }> {
-  const response = await fetch(`${SHOW_BACKEND_URL}/api/state`, { signal });
+  const headers: Record<string, string> = {};
+  if (controlToken) headers['x-control-token'] = controlToken;
+  const response = await fetch(`${SHOW_BACKEND_URL}/api/state`, { headers, signal });
   if (!response.ok) throw new Error(`Show API state failed: ${response.status}`);
   const state = await response.json();
   const presentation = state?.modules?.interaction?.screenPresentation || {};
