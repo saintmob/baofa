@@ -136,11 +136,17 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: APP_PORT,
       strictPort: true,
-      hmr: disableHmr
-        ? false
-        : {
-            clientPort: APP_PORT,
-          },
+      hmr: false,
+      ws: false,
+      watch: {
+        ignored: [
+          '**/.git/**',
+          '**/node_modules/**',
+          '**/dist/**',
+          '**/.chrome*/**',
+          '**/*.log',
+        ],
+      },
 
       ...(enableAiStudioNoAutoreloadGuard
         ? {

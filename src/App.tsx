@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAudio } from './hooks/useAudio';
+import { useAudio, type FireworkBurstKind } from './hooks/useAudio';
 import { useHandTracking } from './hooks/useHandTracking';
 import { AnimatePresence, motion } from 'motion/react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -9,10 +9,10 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
-import { BAOFA_NATIVE_URL } from './lib/runtimeConfig';
+import { APP_PORT, BAOFA_NATIVE_URL } from './lib/runtimeConfig';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles } from 'lucide-react';
+import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
@@ -84,6 +84,13 @@ const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; lab
   { mode: 'climax', label: 'Climax / 高潮', intensity: 1 },
 ];
 
+const fireworkEffectModes: Array<{ kind: FireworkPanelBurstKind; label: string }> = [
+  { kind: 'small', label: 'Small / 小炸' },
+  { kind: 'medium', label: 'Triple / 中炸' },
+  { kind: 'large', label: 'Burst / 大炸' },
+  { kind: 'giant', label: 'Giant / 巨炸' },
+];
+
 const createIdFragment = () => {
   const uuid = globalThis.crypto?.randomUUID?.();
   return uuid ? uuid.slice(0, 8) : Math.random().toString(36).slice(2, 10);
@@ -125,6 +132,233 @@ type WebGLStats = {
 
 type TreePhase = 'idle' | 'growing' | 'bright' | 'fading';
 type VisualMode = 'tree' | 'firework';
+type TreeControlMode = 'manual' | 'auto';
+type FireworkPanelBurstKind = FireworkBurstKind | 'giant';
+
+const AUTO_FISH_PATH = ['A1', 'B2', 'B3', 'B4', 'B5', 'D2', 'D1', 'L1', 'E1', 'R2', 'F1'];
+const AUTO_REVEAL_MS = 10000;
+const AUTO_FISH_DURATION_MS = 36000;
+const AUTO_FISH_GATHER_FRACTION = 0.2;
+const AUTO_END_BLACKOUT_MS = 3000;
+const AUTO_MUSIC_PLAYBACK_RATE = 1;
+const AUTO_FIREWORK_DURATION_MS = 20000;
+
+function getScreenLayout(id: string) {
+  return id === 'A1' || id === 'MASTER'
+    ? MASTER_SCREEN
+    : SCREEN_LAYOUT_ITEMS.find((item) => item.id === id) ?? MASTER_SCREEN;
+}
+
+function getFishRoutePoint(id: string, role: 'center' | 'entry' | 'exit' = 'center') {
+  const screen = getScreenLayout(id);
+  const width = screen.width ?? 0.78;
+  const height = screen.height ?? 0.52;
+
+  if (role === 'entry') {
+    return {
+      col: screen.col + width / 2 + 0.95,
+      row: screen.row - height / 2 - 0.72,
+    };
+  }
+
+  if (role === 'exit') {
+    return {
+      col: screen.col - width / 2 - 0.95,
+      row: screen.row + height / 2 + 0.72,
+    };
+  }
+
+  return { col: screen.col, row: screen.row };
+}
+
+function getFishStagePosition(progress: number) {
+  const clamped = THREE.MathUtils.clamp(progress, 0, 1);
+  const travelProgress = clamped;
+  const route = [
+    getFishRoutePoint('A1', 'entry'),
+    ...AUTO_FISH_PATH.map((screen) => getFishRoutePoint(screen)),
+    getFishRoutePoint('F1', 'exit'),
+  ];
+  const segmentCount = route.length - 1;
+  const scaled = travelProgress * segmentCount;
+  const index = Math.min(segmentCount - 1, Math.floor(scaled));
+  const local = scaled - index;
+  const eased = local < 0.5 ? 2 * local * local : 1 - Math.pow(-2 * local + 2, 2) / 2;
+  const from = route[index];
+  const to = route[index + 1];
+  const dx = to.col - from.col;
+  const dy = to.row - from.row;
+  const length = Math.max(0.001, Math.hypot(dx, dy));
+  const normalX = -dy / length;
+  const normalY = dx / length;
+  const wave =
+    Math.sin(travelProgress * Math.PI * 4.2 + index * 0.9) * 0.16 +
+    Math.sin(travelProgress * Math.PI * 9.5 + index * 1.7) * 0.07;
+  const driftCol =
+    Math.sin(travelProgress * Math.PI * 2.1) * 0.07 +
+    Math.sin(travelProgress * Math.PI * 6.2 + index) * 0.035;
+
+  return {
+    col: THREE.MathUtils.lerp(from.col, to.col, eased) + normalX * wave + driftCol,
+    row: THREE.MathUtils.lerp(from.row, to.row, eased) + normalY * wave + Math.sin(travelProgress * Math.PI * 7.5 + index) * 0.055,
+    angle: Math.atan2(dy + normalY * wave, dx + normalX * wave) * 180 / Math.PI,
+  };
+}
+
+function getFishPosition(progress: number, screenId: string, isOverview: boolean) {
+  if (isOverview) {
+    const stage = getFishStagePosition(progress);
+    return {
+      x: (stage.col / STAGE_BOUNDS.width) * 100,
+      y: (stage.row / STAGE_BOUNDS.height) * 100,
+      angle: stage.angle,
+      visible: true,
+    };
+  }
+
+  const stage = getFishStagePosition(progress);
+  const screen = getScreenLayout(screenId);
+  const width = screen.width ?? 0.78;
+  const height = screen.height ?? 0.52;
+  const localX = ((stage.col - (screen.col - width / 2)) / width) * 100;
+  const localY = ((stage.row - (screen.row - height / 2)) / height) * 100;
+  const isGathering = progress < AUTO_FISH_GATHER_FRACTION;
+  const margin = isGathering || progress > 0.88 ? 170 : 34;
+
+  return {
+    x: localX,
+    y: localY,
+    angle: stage.angle - (screen.rotate ?? 0),
+    visible:
+      (!isGathering || screen.id === 'A1') &&
+      localX >= -margin &&
+      localX <= 100 + margin &&
+      localY >= -margin &&
+      localY <= 100 + margin,
+  };
+}
+
+function AutoFishSchool({ active, progress, screenId, isOverview }: { active: boolean; progress: number; screenId: string; isOverview: boolean }) {
+  if (!active) return null;
+  const position = getFishPosition(progress, screenId, isOverview);
+  if (!position.visible) return null;
+  const gather = 1;
+  const entryOpacity = THREE.MathUtils.smoothstep(progress, 0.015, 0.13);
+  const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
+  const fishOpacity = entryOpacity * exitOpacity;
+  const tailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * exitOpacity;
+
+  return (
+    <div className="fixed inset-0 z-30 pointer-events-none overflow-hidden" data-auto-fish-school>
+      <div
+        className="absolute h-[28rem] w-[44rem] transition-opacity duration-700"
+        data-auto-fish-body
+        style={{
+          left: `${position.x}%`,
+          top: `${position.y}%`,
+          opacity: fishOpacity,
+          transform: `translate(-50%, -50%) rotate(${position.angle}deg)`,
+          filter: 'drop-shadow(0 0 24px rgba(240,253,250,0.58)) drop-shadow(0 0 46px rgba(34,211,238,0.42)) drop-shadow(0 0 72px rgba(14,165,233,0.22))',
+        }}
+      >
+        {Array.from({ length: 128 }).map((_, index) => {
+          const lane = index % 32;
+          const band = Math.floor(index / 32);
+          const flow = (progress * 520 + index * 13.7) % 280;
+          const x = -flow - band * 52 + Math.sin(index * 1.43 + progress * 18) * 28;
+          const y = Math.sin(lane * 0.73 + band * 1.2 + progress * 14) * (54 + band * 18) + Math.cos(index * 0.41) * 18;
+          const size = 1.4 + (index % 5) * 0.55;
+          const sparkle = 0.42 + Math.sin(progress * 55 + index * 0.91) * 0.28;
+
+          return (
+            <span
+              key={`auto-fish-particle-${index}`}
+              className="absolute rounded-full"
+              style={{
+                width: size,
+                height: size,
+                left: `calc(50% + ${x}px)`,
+                top: `calc(50% + ${y}px)`,
+                opacity: tailOpacity * THREE.MathUtils.clamp(sparkle, 0.08, 0.76),
+                background: index % 7 === 0 ? 'rgba(236,254,255,0.88)' : 'rgba(103,232,249,0.72)',
+                boxShadow: '0 0 8px rgba(125,249,255,0.72), 0 0 18px rgba(34,211,238,0.38)',
+                filter: 'blur(0.25px)',
+              }}
+            />
+          );
+        })}
+        {Array.from({ length: 76 }).map((_, index) => {
+          const ring = Math.floor(index / 19);
+          const lane = index % 19;
+          const drift = Math.sin(progress * 8.5 + ring * 1.7) * 26 + Math.cos(progress * 5.2 + index * 0.47) * 12;
+          const scatterX = Math.sin(index * 2.37) * 18 + Math.cos(index * 0.83) * 12;
+          const scatterY = Math.cos(index * 1.91) * 16 + Math.sin(index * 0.61) * 10;
+          const schoolX = -ring * 48 + Math.cos(lane * 0.68 + ring * 1.31) * (84 - ring * 5) + Math.sin(progress * 12 + index * 0.77) * 22 + drift + scatterX;
+          const schoolY = Math.sin(lane * 0.79 + ring * 0.69) * (56 + ring * 14) + Math.sin(progress * 10 + index) * 20 + scatterY;
+          const particleX = Math.sin(index * 12.7) * 260 + Math.cos(index * 3.1) * 68;
+          const particleY = Math.cos(index * 9.3) * 170 + Math.sin(index * 5.4) * 45;
+          const x = THREE.MathUtils.lerp(particleX, schoolX, gather);
+          const y = THREE.MathUtils.lerp(particleY, schoolY, gather);
+          const shimmer = 0.62 + Math.sin(progress * 46 + index * 1.41) * 0.24 + (index % 5) * 0.04;
+          const fishLength = 28 + (index % 6) * 4.5;
+          const fishHeight = 7.5 + (index % 5) * 1.2;
+          const tailLength = 20 + (index % 7) * 4;
+          const tailOffset = 20 + (index % 5) * 5;
+          const fishAngle = Math.sin(progress * 11 + index * 0.91) * 10 + (index % 3 - 1) * 4;
+
+          return (
+            <div key={`auto-fish-${index}`}>
+              <span
+                className="absolute rounded-full"
+                style={{
+                  width: tailLength,
+                  height: Math.max(1, fishHeight * 0.22),
+                  left: `calc(50% + ${x - tailOffset}px)`,
+                  top: `calc(50% + ${y + Math.sin(index) * 2}px)`,
+                  opacity: tailOpacity * fishOpacity * 0.22,
+                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
+                  background: 'linear-gradient(90deg, rgba(8,145,178,0), rgba(34,211,238,0.18), rgba(125,249,255,0.48), rgba(240,253,250,0.08))',
+                  boxShadow: '0 0 14px rgba(34,211,238,0.42), 0 0 30px rgba(14,165,233,0.24)',
+                  filter: 'blur(2.6px)',
+                }}
+              />
+              <span
+                className="absolute rounded-full"
+                style={{
+                  width: tailLength * 1.65,
+                  height: Math.max(2, fishHeight * 0.52),
+                  left: `calc(50% + ${x - tailOffset - tailLength * 0.36}px)`,
+                  top: `calc(50% + ${y + Math.sin(index) * 2}px)`,
+                  opacity: tailOpacity * fishOpacity * 0.12,
+                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
+                  background: 'radial-gradient(ellipse at 70% 50%, rgba(125,249,255,0.46) 0%, rgba(34,211,238,0.22) 42%, rgba(8,145,178,0) 100%)',
+                  filter: 'blur(5px)',
+                }}
+              />
+              <span
+                className="absolute"
+                style={{
+                  width: fishLength,
+                  height: fishHeight,
+                  left: `calc(50% + ${x}px)`,
+                  top: `calc(50% + ${y}px)`,
+                  opacity: fishOpacity * THREE.MathUtils.clamp(shimmer, 0.28, 1),
+                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
+                  borderRadius: '70% 46% 46% 70% / 58% 48% 52% 42%',
+                  background: 'radial-gradient(ellipse at 26% 50%, rgba(255,255,255,0.98) 0%, rgba(235,254,255,0.86) 32%, rgba(151,245,255,0.36) 64%, rgba(151,245,255,0) 100%), linear-gradient(90deg, rgba(103,232,249,0.02) 0%, rgba(224,252,255,0.7) 28%, rgba(255,255,255,0.9) 62%, rgba(125,249,255,0.16) 100%)',
+                  boxShadow: '0 0 9px rgba(255,255,255,0.62), 0 0 18px rgba(125,249,255,0.34)',
+                  filter: 'blur(0.22px)',
+                  WebkitMaskImage: 'linear-gradient(90deg, rgba(0,0,0,0.78) 0%, #000 18%, #000 78%, rgba(0,0,0,0.12) 100%)',
+                  maskImage: 'linear-gradient(90deg, rgba(0,0,0,0.78) 0%, #000 18%, #000 78%, rgba(0,0,0,0.12) 100%)',
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
   const { gl, size } = useThree();
@@ -179,13 +413,18 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
 export default function App() {
   const screenMatch = window.location.pathname.match(/^\/screen\/([^/]+)/);
   const routeScreenId = screenMatch ? decodeURIComponent(screenMatch[1]) : '';
+  const isLocalPreview = ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.port === String(APP_PORT);
   const {
     isStarted,
     addRandomSampleLayer,
     triggerScaleNote,
+    triggerFireworkBurst,
     fadeToSingleLayer,
     updateTreeLayers,
+    restartTreeMusic,
+    fadeTreeMusic,
     stopAllLayers,
+    startAudio,
     setMusicEvolution,
     evolution,
     getAudioData,
@@ -202,7 +441,15 @@ export default function App() {
   const [isMaster, setIsMaster] = useState(() => localStorage.getItem('baofa-role') === 'master');
   const [isOverview, setIsOverview] = useState(() => localStorage.getItem('baofa-view') === 'overview');
   const [visualMode, setVisualMode] = useState<VisualMode>('tree');
-  const [showScreenPanel, setShowScreenPanel] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [treeControlMode, setTreeControlMode] = useState<TreeControlMode>('manual');
+  const [fireworkControlMode, setFireworkControlMode] = useState<TreeControlMode>('manual');
+  const [fireworkPanelBurst, setFireworkPanelBurst] = useState<FireworkPanelBurstKind | null>(null);
+  const [autoSceneOpacity, setAutoSceneOpacity] = useState(1);
+  const [autoBlackout, setAutoBlackout] = useState(false);
+  const [autoFishActive, setAutoFishActive] = useState(false);
+  const [autoFishProgress, setAutoFishProgress] = useState(0);
+  const [showScreenPanel, setShowScreenPanel] = useState(() => isLocalPreview);
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
   const [treeTriggered, setTreeTriggered] = useState(false);
@@ -221,11 +468,12 @@ export default function App() {
   const [screenPresentation, setScreenPresentation] = useState<ScreenPresentation>({
     autoRedirect: true,
     showDebug: false,
-    showMenu: false,
+    showMenu: isLocalPreview,
   });
   const [screenRouteError, setScreenRouteError] = useState('');
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
+  const fireworkClickStreakRef = useRef(0);
   const treeGrowthRef = useRef(0);
   const treeTriggeredRef = useRef(false);
   const treeCompletedAtRef = useRef<number | null>(null);
@@ -242,6 +490,10 @@ export default function App() {
   const gestureStartTimeoutRef = useRef<number | null>(null);
   const standbyPromptTimeoutRef = useRef<number | null>(null);
   const fireworkScratchTimeoutRef = useRef<number | null>(null);
+  const autoTimelineTimersRef = useRef<number[]>([]);
+  const autoTreeActiveRef = useRef(false);
+  const autoFireworkActiveRef = useRef(false);
+  const autoFishStartedAtRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
@@ -328,6 +580,11 @@ export default function App() {
           treeFadingRef.current = false;
           treePhaseRef.current = 'idle';
           treeControllerRef.current = false;
+          autoTreeActiveRef.current = false;
+          if (treeControlMode === 'auto') {
+            setAutoSceneOpacity(0);
+            setAutoBlackout(true);
+          }
           intensityRef.current = 0.08;
           evolutionRef.current = 0;
           setTreeGrowth(0);
@@ -384,6 +641,16 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'global/state');
     }
+  }, []);
+
+  const clearAutoTimeline = useCallback(() => {
+    autoTimelineTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    autoTimelineTimersRef.current = [];
+    autoTreeActiveRef.current = false;
+    autoFireworkActiveRef.current = false;
+    autoFishStartedAtRef.current = null;
+    setAutoFishActive(false);
+    setAutoFishProgress(0);
   }, []);
 
   const scheduleStandbyPrompt = useCallback((delayMs = STANDBY_PROMPT_DELAY_MS, armGestureInput = true) => {
@@ -459,7 +726,7 @@ export default function App() {
       if (Math.abs(nextProgress - gestureProgressRef.current) > 0.001 || nextProgress === 0 || nextProgress === 1) {
         gestureProgressRef.current = nextProgress;
         setGestureProgress(nextProgress);
-        if (nextProgress > 0) {
+        if (soundEnabled && nextProgress > 0) {
           fadeToSingleLayer(nextProgress);
         }
       }
@@ -484,7 +751,9 @@ export default function App() {
         intensityRef.current = Math.max(0.08, intensityRef.current - deltaMs / TREE_FADE_MS);
         evolutionRef.current = Math.max(0, evolutionRef.current - deltaMs / TREE_FADE_MS);
         setMusicEvolution(evolutionRef.current);
-        updateTreeLayers(treeGrowthRef.current, evolutionRef.current, true);
+        if (soundEnabled) {
+          updateTreeLayers(treeGrowthRef.current, evolutionRef.current, true);
+        }
         if (treeGrowthRef.current <= 0.001) {
           treeGrowthRef.current = 0;
           treeTriggeredRef.current = false;
@@ -504,36 +773,59 @@ export default function App() {
           gestureNeedsReleaseRef.current = false;
           gestureInputArmedRef.current = false;
           setMode('idle');
-          scheduleStandbyPrompt(ROUND_STANDBY_PROMPT_DELAY_MS, false);
           syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+          if (treeControlMode === 'auto') {
+            setAutoSceneOpacity(0);
+            setAutoBlackout(true);
+            const endBlackoutTimer = window.setTimeout(() => {
+              setTreeControlMode('manual');
+              setAutoBlackout(false);
+              setAutoSceneOpacity(1);
+              scheduleStandbyPrompt(0, false);
+            }, AUTO_END_BLACKOUT_MS);
+            autoTimelineTimersRef.current.push(endBlackoutTimer);
+          } else {
+            scheduleStandbyPrompt(ROUND_STANDBY_PROMPT_DELAY_MS, false);
+          }
         }
       } else {
-        const speed = 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
+        const speed = autoTreeActiveRef.current
+          ? 0.0018
+          : 0.01 + (handGestureActive ? openHandCount * 0.009 : 0.004);
         treeGrowthRef.current = Math.min(1, treeGrowthRef.current + speed);
         if (treeGrowthRef.current >= 1) {
           treeCompletedAtRef.current ??= Date.now();
           intensityRef.current = Math.min(1, intensityRef.current + 0.01);
           evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
           setMusicEvolution(evolutionRef.current);
-          updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
+          if (soundEnabled) {
+            updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
+          }
 
           const completedElapsed = Date.now() - treeCompletedAtRef.current;
+          const colorRampMs = autoTreeActiveRef.current ? 7000 : TREE_COLOR_RAMP_MS;
           if (
             (intensityRef.current >= 0.995 && evolutionRef.current >= 0.995) ||
-            completedElapsed > TREE_COLOR_RAMP_MS
+            completedElapsed > colorRampMs
           ) {
             treeBrightAtRef.current ??= Date.now();
             treePhaseRef.current = 'bright';
           }
 
-          if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > TREE_BRIGHT_HOLD_MS) {
+          const brightHoldMs = autoTreeActiveRef.current ? 5500 : TREE_BRIGHT_HOLD_MS;
+          if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > brightHoldMs) {
             treeFadingRef.current = true;
             treePhaseRef.current = 'fading';
             setMode('flow');
+            if (autoTreeActiveRef.current && soundEnabled) {
+              fadeTreeMusic(TREE_FADE_MS / 1000);
+            }
           }
         } else {
           treePhaseRef.current = 'growing';
-          updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
+          if (soundEnabled) {
+            updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
+          }
         }
       }
       setTreeGrowth(treeGrowthRef.current);
@@ -546,8 +838,21 @@ export default function App() {
       setIntensity(intensityRef.current);
     }
 
+    if (autoFishStartedAtRef.current !== null) {
+      const nextProgress = THREE.MathUtils.clamp((performance.now() - autoFishStartedAtRef.current) / AUTO_FISH_DURATION_MS, 0, 1);
+      setAutoFishProgress(nextProgress);
+      if (nextProgress >= 1) {
+        autoFishStartedAtRef.current = null;
+        setAutoFishActive(false);
+      }
+    }
+
+    if (soundEnabled && visualMode === 'tree' && !treeControllerRef.current) {
+      updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
+    }
+
     requestRef.current = requestAnimationFrame(animate);
-  }, [fadeToSingleLayer, getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, setMusicEvolution, startGestureGrowth, stopAllLayers, syncToFirebase, updateTreeLayers]);
+  }, [fadeToSingleLayer, fadeTreeMusic, getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, setMusicEvolution, soundEnabled, startGestureGrowth, stopAllLayers, syncToFirebase, treeControlMode, updateTreeLayers, visualMode]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
@@ -561,8 +866,9 @@ export default function App() {
       if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
       if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
       if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
+      clearAutoTimeline();
     };
-  }, []);
+  }, [clearAutoTimeline]);
 
   useEffect(() => {
     if (!treeTriggered || !treeControllerRef.current) return;
@@ -633,7 +939,24 @@ export default function App() {
     localStorage.setItem('baofa-view', isOverview ? 'overview' : 'screen');
   }, [isOverview]);
 
+  useEffect(() => {
+    if (visualMode !== 'firework') return;
+    stopAllLayers();
+    setMusicEvolution(0);
+    evolutionRef.current = 0;
+  }, [setMusicEvolution, stopAllLayers, visualMode]);
+
   const resetTreeGrowth = () => {
+    const shouldRestartAuto = treeControlMode === 'auto';
+    clearAutoTimeline();
+    if (!shouldRestartAuto) {
+      setTreeControlMode('manual');
+      setAutoBlackout(false);
+      setAutoSceneOpacity(1);
+    } else {
+      setAutoBlackout(true);
+      setAutoSceneOpacity(0);
+    }
     if (gestureStartTimeoutRef.current) {
       window.clearTimeout(gestureStartTimeoutRef.current);
       gestureStartTimeoutRef.current = null;
@@ -665,6 +988,11 @@ export default function App() {
     stopAllLayers();
     setMode('idle');
     syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+    if (shouldRestartAuto) {
+      window.setTimeout(() => {
+        void startAutoTreeShow();
+      }, 260);
+    }
   };
 
   const applyEffectMode = (nextMode: 'idle' | 'interaction' | 'flow' | 'climax', nextIntensity: number) => {
@@ -695,6 +1023,353 @@ export default function App() {
     setIsOverview(false);
   };
 
+  const triggerAutoPulse = useCallback((sourceScreen: string, power: number) => {
+    const point = getScreenWorldPoint(sourceScreen);
+    const timestamp = Date.now();
+    const nextIntensity = Math.min(1, Math.max(intensityRef.current, 0.28 + power * 0.58));
+    const nextEvolution = Math.min(0.52, evolutionRef.current + 0.028 + power * 0.022);
+
+    intensityRef.current = nextIntensity;
+    evolutionRef.current = nextEvolution;
+    setIntensity(nextIntensity);
+    setMusicEvolution(nextEvolution);
+    setInteractionPoint(point);
+    setScreenPulse({ source: sourceScreen, timestamp });
+    setMode('interaction');
+    window.setTimeout(() => {
+      if (!autoTreeActiveRef.current) {
+        setInteractionPoint(null);
+        setMode('idle');
+      }
+    }, 1250);
+    syncToFirebase({
+      lastInteraction: { x: point.x, y: point.y, z: point.z, timestamp },
+      screenPulse: { source: sourceScreen, timestamp },
+      intensity: nextIntensity,
+      evolution: nextEvolution,
+      mode: 'interaction',
+    });
+  }, [setMusicEvolution, syncToFirebase]);
+
+  const triggerFireworkAt = useCallback(async (
+    point: THREE.Vector3,
+    kind: FireworkBurstKind,
+    sourceScreen = screenId,
+    keepAliveMs = 650
+  ) => {
+    const timestamp = Date.now();
+    const power = kind === 'large' ? 1 : kind === 'medium' ? 0.72 : 0.44;
+    const nextIntensity = Math.min(1, Math.max(intensityRef.current, 0.2 + power * 0.8));
+    const nextEvolution = Math.min(1, Math.max(evolutionRef.current, power));
+
+    if (soundEnabled) {
+      await triggerFireworkBurst(kind);
+    }
+
+    intensityRef.current = nextIntensity;
+    evolutionRef.current = nextEvolution;
+    setIntensity(nextIntensity);
+    setMusicEvolution(nextEvolution);
+    setInteractionPoint(point);
+    setFireworkScratchPoint(point);
+    setMode(kind === 'large' ? 'climax' : 'interaction');
+    setScreenPulse({ source: sourceScreen, timestamp });
+    if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
+    fireworkScratchTimeoutRef.current = window.setTimeout(() => {
+      fireworkScratchTimeoutRef.current = null;
+      setFireworkScratchPoint(null);
+    }, Math.min(260, keepAliveMs));
+    window.setTimeout(() => {
+      if (!autoFireworkActiveRef.current) {
+        setInteractionPoint(null);
+        setMode('idle');
+      }
+    }, keepAliveMs);
+
+    syncToFirebase({
+      lastInteraction: { x: point.x, y: point.y, z: point.z, timestamp },
+      screenPulse: { source: sourceScreen, timestamp },
+      intensity: nextIntensity,
+      evolution: nextEvolution,
+      mode: kind === 'large' ? 'climax' : 'interaction',
+      visualMode: 'firework',
+    });
+  }, [screenId, setMusicEvolution, soundEnabled, syncToFirebase, triggerFireworkBurst]);
+
+  const triggerFireworkPanelBurst = useCallback((kind: FireworkPanelBurstKind) => {
+    if (fireworkControlMode === 'auto') return;
+    setVisualMode('firework');
+    setFireworkPanelBurst(kind);
+    window.setTimeout(() => {
+      setFireworkPanelBurst((current) => current === kind ? null : current);
+    }, kind === 'giant' ? 1800 : 900);
+
+    const sourceScreen = isOverview ? 'F1' : screenId;
+    const center = new THREE.Vector3(0, 0, 0);
+    const schedule = (delay: number, x: number, y: number, burstKind: FireworkBurstKind, keepAliveMs = 760) => {
+      window.setTimeout(() => {
+        void triggerFireworkAt(new THREE.Vector3(x, y, 0), burstKind, sourceScreen, keepAliveMs);
+      }, delay);
+    };
+
+    if (kind === 'small') {
+      schedule(0, center.x, center.y, 'small', 680);
+      return;
+    }
+
+    if (kind === 'medium') {
+      [
+        [-0.55, 0.24],
+        [0.2, -0.16],
+        [0.72, 0.18],
+      ].forEach(([x, y], index) => schedule(index * 130, x, y, 'medium', 760));
+      return;
+    }
+
+    if (kind === 'large') {
+      [
+        [-1.2, 0.74],
+        [-0.35, 0.14],
+        [0.52, -0.32],
+        [1.36, 0.4],
+        [0.1, 0.9],
+        [-0.72, -0.56],
+      ].forEach(([x, y], index) => schedule(index * 115, x, y, 'large', 980));
+      return;
+    }
+
+    [
+      [-2.3, 1.15],
+      [-1.55, 0.35],
+      [-0.8, -0.42],
+      [0, 0.62],
+      [0.82, -0.18],
+      [1.65, 0.5],
+      [2.45, -0.72],
+      [1.1, 1.42],
+      [-0.15, -1.22],
+      [-1.25, 1.78],
+    ].forEach(([x, y], index) => schedule(index * 105, x, y, 'large', 1120));
+  }, [fireworkControlMode, isOverview, screenId, triggerFireworkAt]);
+
+  const startAutoFireworkShow = useCallback(async () => {
+    clearAutoTimeline();
+    setVisualMode('firework');
+    setFireworkControlMode('auto');
+    setTreeControlMode('manual');
+    autoTreeActiveRef.current = false;
+    autoFireworkActiveRef.current = true;
+    fireworkClickStreakRef.current = 0;
+    intensityRef.current = 0.16;
+    evolutionRef.current = 0;
+    setIntensity(0.16);
+    setMusicEvolution(0);
+    setInteractionPoint(null);
+    setFireworkScratchPoint(null);
+    setMode('idle');
+    setAutoBlackout(true);
+    setAutoSceneOpacity(0);
+    setAutoFishActive(false);
+    setAutoFishProgress(0);
+    autoFishStartedAtRef.current = null;
+    stopAllLayers();
+
+    if (soundEnabled) {
+      await startAudio();
+    }
+
+    syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.16, evolution: 0 });
+
+    const revealTimer = window.setTimeout(() => {
+      setAutoBlackout(false);
+      setAutoSceneOpacity(1);
+    }, 260);
+    autoTimelineTimersRef.current.push(revealTimer);
+
+    const pattern: Array<{ t: number; x: number; y: number; kind: FireworkBurstKind }> = [
+      { t: 0, x: -7.8, y: 2.8, kind: 'small' },
+      { t: 900, x: -3.6, y: 1.4, kind: 'small' },
+      { t: 1800, x: 2.2, y: 3.1, kind: 'small' },
+      { t: 3100, x: 5.8, y: 0.4, kind: 'medium' },
+      { t: 3240, x: 5.2, y: 0.9, kind: 'medium' },
+      { t: 3380, x: 6.1, y: -0.2, kind: 'medium' },
+      { t: 5000, x: -5.8, y: -2.2, kind: 'small' },
+      { t: 6100, x: -1.6, y: -0.8, kind: 'small' },
+      { t: 7200, x: 1.8, y: 2.2, kind: 'medium' },
+      { t: 7350, x: 1.2, y: 1.8, kind: 'medium' },
+      { t: 7500, x: 2.4, y: 1.6, kind: 'medium' },
+      { t: 9200, x: -7.2, y: 0.1, kind: 'small' },
+      { t: 10400, x: 7.0, y: -2.6, kind: 'small' },
+      { t: 11800, x: -2.5, y: 3.2, kind: 'large' },
+      { t: 11940, x: -1.6, y: 2.7, kind: 'large' },
+      { t: 12080, x: -0.5, y: 2.1, kind: 'large' },
+      { t: 12220, x: 0.7, y: 1.5, kind: 'large' },
+      { t: 12360, x: 1.9, y: 0.9, kind: 'large' },
+      { t: 12500, x: 3.0, y: 0.2, kind: 'large' },
+      { t: 14600, x: -5.0, y: -3.0, kind: 'medium' },
+      { t: 14750, x: -4.2, y: -2.3, kind: 'medium' },
+      { t: 14900, x: -3.3, y: -1.8, kind: 'medium' },
+      { t: 16600, x: 3.7, y: 3.1, kind: 'small' },
+      { t: 17800, x: 0.2, y: -2.4, kind: 'large' },
+      { t: 17930, x: 1.0, y: -1.7, kind: 'large' },
+      { t: 18060, x: 1.9, y: -1.1, kind: 'large' },
+      { t: 18190, x: 2.8, y: -0.4, kind: 'large' },
+    ];
+
+    pattern.forEach(({ t, x, y, kind }) => {
+      const timer = window.setTimeout(() => {
+        void triggerFireworkAt(new THREE.Vector3(x, y, 0), kind, screenId, kind === 'large' ? 920 : 620);
+      }, AUTO_REVEAL_MS + t);
+      autoTimelineTimersRef.current.push(timer);
+    });
+
+    const endTimer = window.setTimeout(() => {
+      autoFireworkActiveRef.current = false;
+      setInteractionPoint(null);
+      setFireworkScratchPoint(null);
+      setMode('idle');
+      intensityRef.current = 0.08;
+      evolutionRef.current = 0;
+      setIntensity(0.08);
+      setMusicEvolution(0);
+      stopAllLayers();
+      setAutoSceneOpacity(0);
+      setAutoBlackout(true);
+      const blackoutTimer = window.setTimeout(() => {
+        setFireworkControlMode('manual');
+        setAutoBlackout(false);
+        setAutoSceneOpacity(1);
+      }, AUTO_END_BLACKOUT_MS);
+      autoTimelineTimersRef.current.push(blackoutTimer);
+    }, AUTO_REVEAL_MS + AUTO_FIREWORK_DURATION_MS);
+    autoTimelineTimersRef.current.push(endTimer);
+  }, [clearAutoTimeline, screenId, setMusicEvolution, soundEnabled, startAudio, stopAllLayers, syncToFirebase, triggerFireworkAt]);
+
+  const startAutoTreeShow = useCallback(async () => {
+    clearAutoTimeline();
+    setVisualMode('tree');
+    setTreeControlMode('auto');
+    setFireworkControlMode('manual');
+    treeGrowthRef.current = 0;
+    treeTriggeredRef.current = false;
+    treeCompletedAtRef.current = null;
+    treeBrightAtRef.current = null;
+    treeFadingRef.current = false;
+    treePhaseRef.current = 'idle';
+    treeControllerRef.current = false;
+    autoTreeActiveRef.current = false;
+    setAutoBlackout(true);
+    setAutoSceneOpacity(0);
+    setAutoFishActive(false);
+    setAutoFishProgress(0);
+    autoFishStartedAtRef.current = null;
+    gestureProgressRef.current = 0;
+    gestureCompletedRef.current = false;
+    gestureRoundLockedRef.current = false;
+    gestureNeedsReleaseRef.current = false;
+    gestureInputArmedRef.current = false;
+    intensityRef.current = 0.14;
+    evolutionRef.current = 0;
+    setTreeGrowth(0);
+    setTreeTriggered(false);
+    setGestureActive(false);
+    setGestureProgress(0);
+    setShowGestureProgress(false);
+    setGestureStartPending(false);
+    setGestureRoundLocked(false);
+    setIntensity(0.14);
+    setMusicEvolution(0);
+    setMode('idle');
+    setInteractionPoint(null);
+    setScreenPulse(null);
+
+    if (soundEnabled) {
+      await startAudio();
+      restartTreeMusic(false, AUTO_MUSIC_PLAYBACK_RATE);
+      updateTreeLayers(0, 0, false);
+    }
+
+    syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.14, evolution: 0, mode: 'idle', visualMode: 'tree' });
+
+    const revealTimer = window.setTimeout(() => {
+      setAutoBlackout(false);
+      setAutoSceneOpacity(1);
+    }, 260);
+    autoTimelineTimersRef.current.push(revealTimer);
+
+    const fishTimer = window.setTimeout(() => {
+      autoFishStartedAtRef.current = performance.now();
+      setAutoFishProgress(0);
+      setAutoFishActive(true);
+    }, AUTO_REVEAL_MS);
+    autoTimelineTimersRef.current.push(fishTimer);
+
+    const pathPulses = AUTO_FISH_PATH.flatMap((screen, index) => {
+      const travelLeaveProgress = index >= AUTO_FISH_PATH.length - 1 ? 1 : (index + 1) / (AUTO_FISH_PATH.length - 1);
+      const leaveProgress = AUTO_FISH_GATHER_FRACTION + travelLeaveProgress * (1 - AUTO_FISH_GATHER_FRACTION);
+      const at = AUTO_REVEAL_MS + leaveProgress * AUTO_FISH_DURATION_MS + 220;
+      const power = Math.min(1, 0.5 + index * 0.052);
+      return index === 4 || index === 9 || index === AUTO_FISH_PATH.length - 1
+        ? [
+            { at, screen, power },
+            { at: at + 320, screen, power: Math.min(1, power + 0.18) },
+          ]
+        : [{ at, screen, power }];
+    });
+
+    const pulses = pathPulses.sort((a, b) => a.at - b.at);
+
+    pulses.forEach(({ at, screen, power }) => {
+      const timer = window.setTimeout(() => triggerAutoPulse(screen, power), at);
+      autoTimelineTimersRef.current.push(timer);
+    });
+
+    const growTimer = window.setTimeout(() => {
+      const treeBasePoint = getScreenWorldPoint('F1');
+      autoTreeActiveRef.current = true;
+      treeControllerRef.current = true;
+      treeTriggeredRef.current = true;
+      treeGrowthRef.current = 0.08;
+      treePhaseRef.current = 'growing';
+      intensityRef.current = 0.72;
+      evolutionRef.current = Math.max(evolutionRef.current, 0.2);
+      setTreeTriggered(true);
+      setTreeGrowth(treeGrowthRef.current);
+      setGestureActive(true);
+      setMode('flow');
+      setInteractionPoint(null);
+      setMusicEvolution(evolutionRef.current);
+      if (soundEnabled) {
+        updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
+      }
+      syncToFirebase({
+        treeGrowth: treeGrowthRef.current,
+        treePhase: treePhaseRef.current,
+        gestureActive: true,
+        intensity: intensityRef.current,
+        evolution: evolutionRef.current,
+        mode: 'flow',
+        lastInteraction: { x: treeBasePoint.x, y: treeBasePoint.y, z: treeBasePoint.z, timestamp: Date.now() },
+      });
+    }, AUTO_REVEAL_MS + AUTO_FISH_DURATION_MS + 2500);
+    autoTimelineTimersRef.current.push(growTimer);
+  }, [clearAutoTimeline, restartTreeMusic, setMusicEvolution, soundEnabled, startAudio, syncToFirebase, triggerAutoPulse, updateTreeLayers]);
+
+  const setManualTreeControl = useCallback(() => {
+    clearAutoTimeline();
+    setTreeControlMode('manual');
+    setAutoBlackout(false);
+    setAutoSceneOpacity(1);
+  }, [clearAutoTimeline]);
+
+  const setManualFireworkControl = useCallback(() => {
+    clearAutoTimeline();
+    setFireworkControlMode('manual');
+    setAutoBlackout(false);
+    setAutoSceneOpacity(1);
+    autoFireworkActiveRef.current = false;
+  }, [clearAutoTimeline]);
+
   const handleSplashPointerDown = async (e: React.PointerEvent) => {
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
@@ -708,8 +1383,28 @@ export default function App() {
       scheduleStandbyPrompt(STANDBY_PROMPT_DELAY_MS, true);
     }
 
+    if (soundEnabled && visualMode === 'tree') {
+      await startAudio();
+      updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
+    }
+
+    if (visualMode === 'tree' && treeControlMode === 'auto') return;
+    if (visualMode === 'firework' && fireworkControlMode === 'auto') return;
+
+    const treeViewingOnly =
+      visualMode === 'tree' &&
+      (treeTriggeredRef.current || gestureProgressRef.current > 0 || showGestureProgress || gestureStartPending || gestureRoundLockedRef.current);
+    if (treeViewingOnly) return;
+
     const sourceScreen = isOverview ? getScreenFromPointer(e.clientX, e.clientY, rect, screenId) : screenId;
-    const point = treeTriggeredRef.current
+    const pointerPoint = new THREE.Vector3(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      0
+    ).multiplyScalar(14);
+    const point = visualMode === 'firework'
+      ? pointerPoint
+      : treeTriggeredRef.current
       ? new THREE.Vector3(
           ((e.clientX - rect.left) / rect.width) * 2 - 1,
           -((e.clientY - rect.top) / rect.height) * 2 + 1,
@@ -717,9 +1412,30 @@ export default function App() {
         ).multiplyScalar(14)
       : getScreenWorldPoint(sourceScreen);
 
-    if (useSampleLibraryRef.current) {
+    const now = Date.now();
+    const gap = now - lastClickTimeRef.current;
+    lastClickTimeRef.current = now;
+
+    if (visualMode === 'firework') {
+      fireworkClickStreakRef.current = gap < 260 ? fireworkClickStreakRef.current + 1 : 1;
+      const burstKind: FireworkPanelBurstKind = fireworkClickStreakRef.current >= 10
+        ? 'giant'
+        : fireworkClickStreakRef.current >= 6
+        ? 'large'
+        : fireworkClickStreakRef.current >= 3
+          ? 'medium'
+          : 'small';
+      if (burstKind === 'giant') {
+        triggerFireworkPanelBurst('giant');
+      } else {
+        await triggerFireworkAt(point, burstKind, sourceScreen, burstKind === 'large' ? 980 : 680);
+      }
+      return;
+    }
+
+    if (soundEnabled && useSampleLibraryRef.current) {
       await addRandomSampleLayer();
-    } else {
+    } else if (soundEnabled) {
       stopAllLayers();
       await triggerScaleNote();
     }
@@ -727,9 +1443,6 @@ export default function App() {
     setMode('interaction');
     setScreenPulse({ source: sourceScreen, timestamp: Date.now() });
 
-    const now = Date.now();
-    const gap = now - lastClickTimeRef.current;
-    lastClickTimeRef.current = now;
     const tempoBoost = gap < 180 ? 0.62 : gap < 320 ? 0.5 : gap < 520 ? 0.36 : gap < 780 ? 0.26 : 0.18;
     const newIntensity = treeTriggeredRef.current ? intensityRef.current : Math.min(1, intensityRef.current + tempoBoost);
     const newEvolution = treeTriggeredRef.current ? evolutionRef.current : Math.min(1, evolutionRef.current + 0.025);
@@ -868,7 +1581,11 @@ export default function App() {
   ]);
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-  const debugEnabled = screenPresentation.showDebug || (screenPresentation.showMenu && showWebGLDebug);
+  const shouldShowMenu = screenPresentation.showMenu || isLocalPreview;
+  const debugEnabled = screenPresentation.showDebug || (shouldShowMenu && showWebGLDebug);
+  const autoFishScreenId = isOverview ? 'OVERVIEW' : isMaster ? 'A1' : screenId;
+  const autoFishStage = autoFishActive ? getFishStagePosition(autoFishProgress) : null;
+  const activeControlMode = visualMode === 'firework' ? fireworkControlMode : treeControlMode;
 
   if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
     const targetUrl = screenRoute.url;
@@ -909,7 +1626,15 @@ export default function App() {
       onPointerMove={handleSplashPointerMove}
       onPointerUp={handleSplashPointerUp}
     >
-      <div className="absolute inset-0 z-0 pointer-events-none">
+      <div
+        className="absolute inset-0 z-0 pointer-events-none"
+        style={{
+          opacity: autoBlackout ? 0 : autoSceneOpacity,
+          transition: activeControlMode === 'auto'
+            ? autoBlackout ? 'none' : `opacity ${AUTO_REVEAL_MS}ms ease`
+            : 'opacity 600ms ease',
+        }}
+      >
         <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={1} gl={{ antialias: false, powerPreference: 'high-performance' }}>
           <ambientLight intensity={0.45} />
           {visualMode === 'firework' ? (
@@ -932,6 +1657,8 @@ export default function App() {
               gestureActive={gestureActive}
               pulseSource={screenPulse?.source}
               pulseTime={screenPulse?.timestamp}
+              autoFishStage={autoFishStage}
+              autoFishProgress={autoFishProgress}
               isStarted={treeGrowth > 0 || mode === 'interaction'}
               isPaused={false}
             />
@@ -995,10 +1722,10 @@ export default function App() {
                 Hold palm steady {Math.round(gestureProgress * 100)}%
               </div>
             </motion.div>
-          )}
-        </AnimatePresence>
+        )}
+      </AnimatePresence>
 
-        {screenPresentation.showMenu && (
+        {shouldShowMenu && (
         <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={() => isCameraActive ? stopCamera() : startCamera()}
@@ -1023,7 +1750,14 @@ export default function App() {
             <Activity size={18} />
           </button>
           <button
-            onClick={() => setVisualMode((value) => value === 'tree' ? 'firework' : 'tree')}
+            onClick={() => {
+              clearAutoTimeline();
+              setTreeControlMode('manual');
+              setFireworkControlMode('manual');
+              setAutoBlackout(false);
+              setAutoSceneOpacity(1);
+              setVisualMode((value) => value === 'tree' ? 'firework' : 'tree');
+            }}
             className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
               visualMode === 'firework'
                 ? 'border-fuchsia-300/50 bg-fuchsia-300/15 text-fuchsia-100'
@@ -1034,6 +1768,32 @@ export default function App() {
           >
             <Sparkles size={15} />
             {visualMode === 'firework' ? 'Firework' : 'Tree'}
+          </button>
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (visualMode === 'firework') {
+                if (fireworkControlMode === 'auto') {
+                  setManualFireworkControl();
+                } else {
+                  void startAutoFireworkShow();
+                }
+              } else if (treeControlMode === 'auto') {
+                setManualTreeControl();
+              } else {
+                void startAutoTreeShow();
+              }
+            }}
+            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
+              activeControlMode === 'auto'
+                ? 'border-cyan-200/70 bg-cyan-200/18 text-cyan-50'
+                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
+            }`}
+            title={activeControlMode === 'auto' ? `${visualMode === 'firework' ? 'Firework' : 'Tree'} automation on` : `${visualMode === 'firework' ? 'Firework' : 'Tree'} manual mode`}
+            aria-pressed={activeControlMode === 'auto'}
+          >
+            {activeControlMode === 'auto' ? 'Auto' : 'Manual'}
           </button>
           <button
             onPointerDown={(event) => event.stopPropagation()}
@@ -1057,6 +1817,32 @@ export default function App() {
             <Music2 size={15} />
             {useSampleLibrary ? 'Sample' : 'Scale'}
           </button>
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSoundEnabled((value) => {
+                const next = !value;
+                if (!next) {
+                  stopAllLayers();
+                } else if (visualMode === 'tree') {
+                  void startAudio().then(() => {
+                    updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
+                  });
+                }
+                return next;
+              });
+            }}
+            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${
+              soundEnabled
+                ? 'border-cyan-300/45 bg-cyan-300/12 text-cyan-100'
+                : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20 hover:bg-white/10'
+            }`}
+            title={soundEnabled ? 'All sound on' : 'All sound off'}
+            aria-pressed={soundEnabled}
+          >
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
 
           {isCameraActive && (
             <motion.div
@@ -1079,8 +1865,19 @@ export default function App() {
         </div>
         )}
 
+      <AutoFishSchool active={autoFishActive} progress={autoFishProgress} screenId={autoFishScreenId} isOverview={isOverview} />
+      {activeControlMode === 'auto' && (
+        <div
+          className="fixed inset-0 z-40 pointer-events-none bg-black"
+          style={{
+            opacity: autoBlackout ? 1 : 1 - autoSceneOpacity,
+            transition: autoBlackout ? 'none' : `opacity ${AUTO_REVEAL_MS}ms ease`,
+          }}
+        />
+      )}
+
         <AnimatePresence>
-          {screenPresentation.showMenu && showScreenPanel && (
+          {shouldShowMenu && showScreenPanel && (
             <motion.div
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1153,24 +1950,53 @@ export default function App() {
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
-                {effectModes.map((effect) => (
-                  <button
-                    key={effect.mode}
-                    onClick={() => applyEffectMode(effect.mode, effect.intensity)}
-                    className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
-                      mode === effect.mode
-                        ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
-                        : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
-                    }`}
-                  >
-                    {effect.label}
-                  </button>
-                ))}
+                {visualMode === 'firework'
+                  ? fireworkEffectModes.map((effect) => (
+                      <button
+                        key={effect.kind}
+                        onClick={() => triggerFireworkPanelBurst(effect.kind)}
+                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                          fireworkPanelBurst === effect.kind
+                            ? 'border-fuchsia-200/70 bg-fuchsia-300/18 text-fuchsia-50'
+                            : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                        }`}
+                      >
+                        {effect.label}
+                      </button>
+                    ))
+                  : effectModes.map((effect) => (
+                      <button
+                        key={effect.mode}
+                        onClick={() => applyEffectMode(effect.mode, effect.intensity)}
+                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                          mode === effect.mode
+                            ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
+                            : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                        }`}
+                      >
+                        {effect.label}
+                      </button>
+                    ))}
               </div>
 
               <div className="mt-4 flex justify-end">
                 <button
-                  onClick={resetTreeGrowth}
+                  onClick={() => {
+                    if (visualMode === 'firework') {
+                      setManualFireworkControl();
+                      intensityRef.current = 0.08;
+                      evolutionRef.current = 0;
+                      setIntensity(0.08);
+                      setMusicEvolution(0);
+                      setInteractionPoint(null);
+                      setFireworkScratchPoint(null);
+                      setFireworkPanelBurst(null);
+                      setMode('idle');
+                      stopAllLayers();
+                    } else {
+                      resetTreeGrowth();
+                    }
+                  }}
                   className="h-10 rounded border border-white/10 bg-white/5 px-4 text-white/55 text-[10px] font-mono uppercase tracking-widest flex items-center justify-center gap-2"
                 >
                   <RotateCcw size={15} />
@@ -1179,7 +2005,7 @@ export default function App() {
               </div>
 
               <div className="mt-3 h-1 rounded-full bg-white/10 overflow-hidden">
-                <div className="h-full bg-cyan-300 transition-all duration-300" style={{ width: `${Math.round(treeGrowth * 100)}%` }} />
+                <div className="h-full bg-cyan-300 transition-all duration-300" style={{ width: `${Math.round((visualMode === 'firework' ? intensity : treeGrowth) * 100)}%` }} />
               </div>
             </motion.div>
           )}
@@ -1240,7 +2066,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {(screenPresentation.showMenu || screenPresentation.showDebug) && (
+      {(shouldShowMenu || screenPresentation.showDebug) && (
       <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none z-50">
         <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
           showControlStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-gray-900/50 border-white/5 text-white/30'

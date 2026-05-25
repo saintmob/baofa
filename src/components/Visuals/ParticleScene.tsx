@@ -18,6 +18,8 @@ interface ParticleSceneProps {
   gestureActive?: boolean;
   pulseSource?: string;
   pulseTime?: number;
+  autoFishStage?: { col: number; row: number; angle: number } | null;
+  autoFishProgress?: number;
   isStarted?: boolean;
   isPaused?: boolean;
 }
@@ -66,6 +68,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   gestureActive = false,
   pulseSource,
   pulseTime,
+  autoFishStage,
+  autoFishProgress = 0,
   isStarted,
   isPaused
 }) => {
@@ -759,6 +763,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const idleMist = visibleGrowth <= 0.001 ? Math.min(1, 0.58 + intensity * 0.42) : visibleGrowth;
     const sourceLayout = pulseSource ? SCREEN_LAYOUT[pulseSource] : null;
     const pulseAge = pulseTime ? (Date.now() - pulseTime) / 1000 : 99;
+    const fishPoint = autoFishStage ? layoutToWorldPoint(autoFishStage) : null;
+    const fishImpactPresence = fishPoint
+      ? THREE.MathUtils.smoothstep(autoFishProgress, 0.02, 0.12) * (1 - THREE.MathUtils.smoothstep(autoFishProgress, 0.9, 1))
+      : 0;
     const tempoPalette = [
       new THREE.Color("#22d3ee"),
       new THREE.Color("#38bdf8"),
@@ -975,6 +983,9 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
       squareData.forEach((data, i) => {
         let pulse = 0;
+        let fishScatter = 0;
+        let fishScatterX = 0;
+        let fishScatterY = 0;
 
         if (mode === 'interaction' && visibleGrowth <= 0.001 && sourceLayout) {
           const distance = Math.abs(data.screen.col - sourceLayout.col) + Math.abs(data.screen.row - sourceLayout.row);
@@ -982,21 +993,31 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           pulse = Math.sin(delayed * Math.PI) * 0.9;
         }
 
+        if (fishPoint && fishImpactPresence > 0) {
+          const dx = data.position.x - fishPoint.x;
+          const dy = data.position.y - fishPoint.y;
+          const dist = Math.max(0.001, Math.hypot(dx, dy));
+          const wake = Math.max(0, 1 - dist / (isOverviewScreen ? 5.7 : 6.8));
+          fishScatter = wake * wake * fishImpactPresence;
+          fishScatterX = (dx / dist) * fishScatter * (1.35 + intensity * 0.45);
+          fishScatterY = (dy / dist) * fishScatter * (1.05 + intensity * 0.35);
+        }
+
         const freePower = 0.75 + intensity * 1.4 + pulse * 1.15;
         const sway = Math.sin(time * data.speed + data.phase);
         const lift = Math.cos(time * (data.speed * 0.82) + data.phase * 1.37);
         const float = Math.sin(time * (data.speed * 0.56) + data.phase * 0.71);
         squareMatrixObject.position.set(
-          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55,
-          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42,
-          data.position.z + float * data.drift.z * freePower
+          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55 + fishScatterX,
+          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42 + fishScatterY,
+          data.position.z + float * data.drift.z * freePower + fishScatter * (1.8 + Math.sin(time * 2 + i) * 0.6)
         );
         squareMatrixObject.rotation.set(
           0,
           0,
-          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1) + Math.cos(time * 1.2 + i) * 0.18
+          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1 + fishScatter * 2.2) + Math.cos(time * 1.2 + i) * 0.18
         );
-        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25));
+        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25 + fishScatter * 1.8));
         squareMatrixObject.updateMatrix();
         mesh.setMatrixAt(i, squareMatrixObject.matrix);
       });

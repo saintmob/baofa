@@ -8,6 +8,7 @@ import {
 } from '../music-workbench/audio';
 
 type LayerPhase = 'idle' | 'click' | 'gesture' | 'tree' | 'fading';
+export type FireworkBurstKind = 'small' | 'medium' | 'large';
 
 interface SoundLayer {
   id: string;
@@ -16,9 +17,18 @@ interface SoundLayer {
   targetVolume: number;
 }
 
+type TreeMusic = {
+  audio: HTMLAudioElement;
+  source: MediaElementAudioSourceNode;
+  gain: GainNode;
+  filter: BiquadFilterNode;
+};
+
 const MAX_LAYERS = 7;
 const PROJECT_ID = 'baofa-sound-layers';
 const SAMPLE_LIBRARY_STORAGE_KEY = 'baofa-use-sample-library-manual';
+const TREE_MUSIC_URL = '/samples/music/cathedral-bark.mp3';
+const FIREWORK_BURST_MP3_URL = '/samples/firework/IMG_7676.mp3';
 const LIBRARY_SOUNDS = AVAILABLE_SOUNDS.filter((sound) => sound.category !== 'custom');
 const SCALE_NOTES = [293.66, 329.63, 369.99, 440, 493.88];
 
@@ -62,6 +72,7 @@ export function useAudio() {
   const analyserDataRef = useRef<Float32Array>(new Float32Array(1024));
   const analyserConnectedRef = useRef(false);
   const scaleOutputRef = useRef<GainNode | null>(null);
+  const treeMusicRef = useRef<TreeMusic | null>(null);
   const frameRef = useRef<number | null>(null);
 
   const syncProject = useCallback(() => {
@@ -88,7 +99,7 @@ export function useAudio() {
     }
   }, []);
 
-  const ensureStarted = useCallback(async () => {
+  const ensureScaleOutput = useCallback(() => {
     engineManager.init();
     if (!analyserRef.current && engineManager.ctx) {
       analyserRef.current = engineManager.ctx.createAnalyser();
@@ -102,17 +113,94 @@ export function useAudio() {
         scaleOutputRef.current.connect(analyserRef.current);
       }
     }
+  }, []);
+
+  const ensureTreeMusic = useCallback(() => {
+    ensureScaleOutput();
+    const ctx = engineManager.ctx;
+    const output = scaleOutputRef.current;
+    if (!ctx || !output) return null;
+    if (treeMusicRef.current) return treeMusicRef.current;
+
+    const audio = new Audio(TREE_MUSIC_URL);
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
+    const source = ctx.createMediaElementSource(audio);
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    const now = ctx.currentTime;
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2400, now);
+    filter.Q.setValueAtTime(0.35, now);
+    gain.gain.setValueAtTime(0.0001, now);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(output);
+
+    treeMusicRef.current = { audio, source, gain, filter };
+    return treeMusicRef.current;
+  }, [ensureScaleOutput]);
+
+  const setTreeMusic = useCallback((growth: number, musicEvolution: number, isFading: boolean) => {
+    const music = ensureTreeMusic();
+    const ctx = engineManager.ctx;
+    if (!music || !ctx) return;
+
+    const now = ctx.currentTime;
+    const presence = Math.max(0, Math.min(1, isFading ? growth : growth * 0.85 + musicEvolution * 0.25));
+    const targetGain = isFading ? Math.max(0, presence * 0.26) : 0.28 + presence * 0.22;
+
+    music.filter.frequency.setTargetAtTime(1600 + presence * 1200, now, 1.2);
+    const isIntro = music.audio.currentTime < 5;
+    music.gain.gain.setTargetAtTime(targetGain, now, isFading ? 1.4 : isIntro ? 4.2 : 1.8);
+    if (music.audio.paused) {
+      void music.audio.play().catch(() => undefined);
+    }
+  }, [ensureTreeMusic]);
+
+  const restartTreeMusic = useCallback((loop = true, playbackRate = 1) => {
+    const music = ensureTreeMusic();
+    const ctx = engineManager.ctx;
+    if (!music || !ctx) return;
+    music.audio.loop = loop;
+    music.audio.playbackRate = playbackRate;
+    music.audio.currentTime = 0;
+    music.gain.gain.cancelScheduledValues(ctx.currentTime);
+    music.gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    void music.audio.play().catch(() => undefined);
+  }, [ensureTreeMusic]);
+
+  const stopTreeMusic = useCallback((fadeSeconds = 1.2) => {
+    const music = treeMusicRef.current;
+    const ctx = engineManager.ctx;
+    if (!music || !ctx) return;
+    if (fadeSeconds <= 0) {
+      music.gain.gain.cancelScheduledValues(ctx.currentTime);
+      music.gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      music.audio.pause();
+      music.audio.currentTime = 0;
+      return;
+    }
+    music.gain.gain.setTargetAtTime(0.0001, ctx.currentTime, fadeSeconds);
+  }, []);
+
+  const ensureStarted = useCallback(async () => {
+    ensureScaleOutput();
     if (useSampleLibraryRef.current) {
       syncProject();
       engineManager.startProject(PROJECT_ID);
     }
     setIsStarted(true);
-  }, [syncProject]);
+  }, [ensureScaleOutput, syncProject]);
 
   const stopAllLayers = useCallback(() => {
     layersRef.current = [];
     phaseRef.current = 'idle';
     setEvolution(0);
+    stopTreeMusic(0);
     if (engineManager.projects.has(PROJECT_ID)) {
       const project = engineManager.getProject(PROJECT_ID);
       project.setSlots(new Array<SoundDef | null>(MAX_LAYERS).fill(null));
@@ -122,7 +210,7 @@ export function useAudio() {
     }
     engineManager.stopAllProjects();
     setIsStarted(false);
-  }, []);
+  }, [stopTreeMusic]);
 
   const setUseSampleLibrary = useCallback((enabled: boolean) => {
     useSampleLibraryRef.current = enabled;
@@ -139,34 +227,160 @@ export function useAudio() {
     const output = scaleOutputRef.current;
     if (!ctx || !output) return;
 
-    const frequency = SCALE_NOTES[Math.floor(Math.random() * SCALE_NOTES.length)];
+    const frequency = SCALE_NOTES[Math.floor(Math.random() * SCALE_NOTES.length)] * 0.42;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
+    const body = ctx.createOscillator();
+    const brass = ctx.createOscillator();
+    const sub = ctx.createOscillator();
+    const abyss = ctx.createOscillator();
     const shimmer = ctx.createOscillator();
+    const choir = ctx.createOscillator();
+    const sanctum = ctx.createOscillator();
     const toneGain = ctx.createGain();
+    const subGain = ctx.createGain();
+    const brassGain = ctx.createGain();
+    const shimmerGain = ctx.createGain();
+    const sanctumGain = ctx.createGain();
     const filter = ctx.createBiquadFilter();
+    const brassFilter = ctx.createBiquadFilter();
+    const sanctumFilter = ctx.createBiquadFilter();
+    const lowShelf = ctx.createBiquadFilter();
+    const delay = ctx.createDelay(1.2);
+    const longDelay = ctx.createDelay(2);
+    const delayFeedback = ctx.createGain();
+    const longFeedback = ctx.createGain();
+    const delayFilter = ctx.createBiquadFilter();
+    const longDelayFilter = ctx.createBiquadFilter();
+    const spaceGain = ctx.createGain();
+    const farSpaceGain = ctx.createGain();
 
     osc.type = 'sine';
-    shimmer.type = 'triangle';
+    body.type = 'triangle';
+    brass.type = 'sawtooth';
+    sub.type = 'sine';
+    abyss.type = 'sine';
+    shimmer.type = 'sine';
+    choir.type = 'triangle';
+    sanctum.type = 'sine';
     osc.frequency.setValueAtTime(frequency, now);
+    body.frequency.setValueAtTime(frequency * 1.505, now);
+    brass.frequency.setValueAtTime(frequency * 1.5, now);
+    sub.frequency.setValueAtTime(frequency * 0.5, now);
+    abyss.frequency.setValueAtTime(frequency * 0.25, now);
     shimmer.frequency.setValueAtTime(frequency * 2.01, now);
+    choir.frequency.setValueAtTime(frequency * 3.01, now);
+    sanctum.frequency.setValueAtTime(frequency * 0.75, now);
+    body.detune.setValueAtTime(-8, now);
+    brass.detune.setValueAtTime(-14, now);
+    shimmer.detune.setValueAtTime(9, now);
+    choir.detune.setValueAtTime(18, now);
+    sanctum.detune.setValueAtTime(-21, now);
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(2800, now);
-    filter.frequency.exponentialRampToValueAtTime(900, now + 0.75);
+    filter.frequency.setValueAtTime(390, now);
+    filter.frequency.exponentialRampToValueAtTime(1380, now + 0.48);
+    filter.frequency.exponentialRampToValueAtTime(390, now + 3.05);
+    filter.Q.setValueAtTime(1.15, now);
+    brassFilter.type = 'lowpass';
+    brassFilter.frequency.setValueAtTime(280, now);
+    brassFilter.frequency.exponentialRampToValueAtTime(1120, now + 0.58);
+    brassFilter.frequency.exponentialRampToValueAtTime(480, now + 2.75);
+    brassFilter.Q.setValueAtTime(0.75, now);
+    sanctumFilter.type = 'bandpass';
+    sanctumFilter.frequency.setValueAtTime(240, now);
+    sanctumFilter.frequency.exponentialRampToValueAtTime(310, now + 2.4);
+    sanctumFilter.Q.setValueAtTime(1.8, now);
+    lowShelf.type = 'lowshelf';
+    lowShelf.frequency.setValueAtTime(120, now);
+    lowShelf.gain.setValueAtTime(13.5, now);
+    delay.delayTime.setValueAtTime(0.42, now);
+    delayFeedback.gain.setValueAtTime(0.34, now);
+    longDelay.delayTime.setValueAtTime(0.86, now);
+    longFeedback.gain.setValueAtTime(0.22, now);
+    delayFilter.type = 'lowpass';
+    delayFilter.frequency.setValueAtTime(680, now);
+    longDelayFilter.type = 'lowpass';
+    longDelayFilter.frequency.setValueAtTime(420, now);
+    spaceGain.gain.setValueAtTime(0.42, now);
+    farSpaceGain.gain.setValueAtTime(0.3, now);
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.exponentialRampToValueAtTime(0.3, now + 0.22);
+    subGain.gain.exponentialRampToValueAtTime(0.12, now + 2.2);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 4.2);
+    brassGain.gain.setValueAtTime(0.0001, now);
+    brassGain.gain.exponentialRampToValueAtTime(0.08, now + 0.3);
+    brassGain.gain.exponentialRampToValueAtTime(0.19, now + 0.82);
+    brassGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.5);
+    shimmerGain.gain.setValueAtTime(0.0001, now);
+    shimmerGain.gain.exponentialRampToValueAtTime(0.04, now + 0.7);
+    shimmerGain.gain.exponentialRampToValueAtTime(0.0001, now + 4.4);
+    sanctumGain.gain.setValueAtTime(0.0001, now);
+    sanctumGain.gain.exponentialRampToValueAtTime(0.16, now + 0.9);
+    sanctumGain.gain.exponentialRampToValueAtTime(0.09, now + 3);
+    sanctumGain.gain.exponentialRampToValueAtTime(0.0001, now + 5.4);
     toneGain.gain.setValueAtTime(0.0001, now);
-    toneGain.gain.exponentialRampToValueAtTime(0.22, now + 0.018);
-    toneGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+    toneGain.gain.exponentialRampToValueAtTime(0.14, now + 0.26);
+    toneGain.gain.exponentialRampToValueAtTime(0.3, now + 0.9);
+    toneGain.gain.exponentialRampToValueAtTime(0.13, now + 2.6);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, now + 4.6);
 
     osc.connect(filter);
-    shimmer.connect(filter);
-    filter.connect(toneGain);
+    body.connect(filter);
+    sub.connect(subGain);
+    abyss.connect(subGain);
+    brass.connect(brassFilter);
+    choir.connect(brassFilter);
+    sanctum.connect(sanctumFilter);
+    shimmer.connect(shimmerGain);
+    shimmerGain.connect(filter);
+    filter.connect(lowShelf);
+    lowShelf.connect(toneGain);
+    brassFilter.connect(brassGain);
+    brassGain.connect(toneGain);
+    sanctumFilter.connect(sanctumGain);
+    sanctumGain.connect(toneGain);
+    subGain.connect(lowShelf);
     toneGain.connect(output);
+    toneGain.connect(delay);
+    toneGain.connect(longDelay);
+    delay.connect(delayFilter);
+    delayFilter.connect(delayFeedback);
+    delayFeedback.connect(delay);
+    delayFilter.connect(spaceGain);
+    spaceGain.connect(output);
+    longDelay.connect(longDelayFilter);
+    longDelayFilter.connect(longFeedback);
+    longFeedback.connect(longDelay);
+    longDelayFilter.connect(farSpaceGain);
+    farSpaceGain.connect(output);
 
     osc.start(now);
+    body.start(now);
+    brass.start(now);
+    sub.start(now);
+    abyss.start(now);
     shimmer.start(now);
-    osc.stop(now + 0.9);
-    shimmer.stop(now + 0.9);
+    choir.start(now);
+    sanctum.start(now);
+    osc.stop(now + 5.6);
+    body.stop(now + 5.6);
+    brass.stop(now + 5.6);
+    sub.stop(now + 5.6);
+    abyss.stop(now + 5.6);
+    shimmer.stop(now + 5.6);
+    choir.stop(now + 5.6);
+    sanctum.stop(now + 5.6);
   }, [ensureStarted]);
+
+  const triggerFireworkBurst = useCallback(async (kind: FireworkBurstKind = 'small') => {
+    await ensureStarted();
+    stopTreeMusic(0);
+    const audio = new Audio(FIREWORK_BURST_MP3_URL);
+    audio.preload = 'auto';
+    audio.volume = kind === 'large' ? 1 : kind === 'medium' ? 0.88 : 0.76;
+    audio.currentTime = 0;
+    void audio.play().catch(() => undefined);
+  }, [ensureStarted, stopTreeMusic]);
 
   const addRandomSampleLayer = useCallback(async () => {
     await ensureStarted();
@@ -208,7 +422,15 @@ export function useAudio() {
   }, []);
 
   const updateTreeLayers = useCallback((growth: number, musicEvolution: number, isFading: boolean) => {
-    if (!useSampleLibraryRef.current) return;
+    setTreeMusic(growth, musicEvolution, isFading);
+    if (growth <= 0 && isFading) {
+      stopTreeMusic();
+    }
+    if (!useSampleLibraryRef.current) {
+      setEvolution(musicEvolution);
+      setIsStarted(true);
+      return;
+    }
     if (growth <= 0 && !layersRef.current.length) return;
     if (!engineManager.ctx) return;
     syncProject();
@@ -242,7 +464,7 @@ export function useAudio() {
         layer.targetVolume = 48 + layerLift * 28 + musicEvolution * 10;
       }
     });
-  }, [syncProject]);
+  }, [setTreeMusic, stopTreeMusic, syncProject]);
 
   useEffect(() => {
     const tick = () => {
@@ -291,8 +513,11 @@ export function useAudio() {
     startAudio: ensureStarted,
     addRandomSampleLayer,
     triggerScaleNote,
+    triggerFireworkBurst,
     fadeToSingleLayer,
     updateTreeLayers,
+    restartTreeMusic,
+    fadeTreeMusic: stopTreeMusic,
     stopAllLayers,
     setMusicEvolution,
     evolution,
