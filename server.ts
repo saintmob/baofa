@@ -18,6 +18,8 @@ async function startServer() {
     res.json({ status: "ok", env: process.env.NODE_ENV });
   });
 
+  app.use(express.static(path.resolve(__dirname, "public")));
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -28,6 +30,15 @@ async function startServer() {
         strictPort: true,
         hmr: false,
         ws: false,
+        watch: {
+          ignored: [
+            "**/.git/**",
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/.chrome*/**",
+            "**/*.log",
+          ],
+        },
       },
       appType: "spa",
     });
