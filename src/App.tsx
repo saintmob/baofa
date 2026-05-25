@@ -9,7 +9,7 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
-import { BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
+import { BAOFA_NATIVE_URL, getAccessScope, getScreenUrlForOwner, getVjScreenUrl } from './lib/runtimeConfig';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles } from 'lucide-react';
@@ -224,6 +224,7 @@ export default function App() {
     showMenu: false,
   });
   const [screenRouteError, setScreenRouteError] = useState('');
+  const accessScope = getAccessScope();
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -620,7 +621,8 @@ export default function App() {
     if (!isKnownScreenId(routeScreenId)) return;
     if (!screenRoute || screenRoute.owner === 'baofa' || !screenPresentation.autoRedirect) return;
     if (screenRoute.owner === 'vj') {
-      window.location.replace(screenRoute.url || getVjScreenUrl(routeScreenId));
+      const targetUrl = getScreenUrlForOwner('vj', routeScreenId) || getVjScreenUrl(routeScreenId);
+      window.location.replace(targetUrl);
     }
   }, [routeScreenId, screenPresentation.autoRedirect, screenRoute]);
 
@@ -883,7 +885,7 @@ export default function App() {
   const debugEnabled = screenPresentation.showDebug || (screenPresentation.showMenu && showWebGLDebug);
 
   if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
-    const targetUrl = screenRoute.url || getVjScreenUrl(routeScreenId);
+    const targetUrl = getScreenUrlForOwner('vj', routeScreenId) || getVjScreenUrl(routeScreenId);
 
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
@@ -901,7 +903,9 @@ export default function App() {
             Open VJ screen / 打开 VJ 屏
           </a>
           {screenPresentation.autoRedirect && (
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">Redirecting automatically / 自动跳转中</div>
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">
+              Redirecting automatically / 自动跳转中 ({accessScope})
+            </div>
           )}
           {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
         </div>

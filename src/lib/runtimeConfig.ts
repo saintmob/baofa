@@ -1,6 +1,11 @@
 const env = (import.meta as any).env || {};
 const lanHost = String(env.VITE_LAN_HOST || env.SHOW_LAN_HOST || '').trim();
 
+export type AccessScope = 'local' | 'lan';
+export type ScreenOwner = 'vj' | 'baofa' | 'off' | 'diagnostic';
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+
 function getBrowserHost() {
   return typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
 }
@@ -11,6 +16,18 @@ function getBrowserProtocol() {
 
 function isLocalAddress(value: string) {
   return /(^|\/\/)localhost(?::|\/|$)|(^|\/\/)127\.0\.0\.1(?::|\/|$)|(^|\/\/)0\.0\.0\.0(?::|\/|$)/i.test(value);
+}
+
+export function isLoopbackHost(value: string) {
+  return LOOPBACK_HOSTS.has(String(value || '').trim().toLowerCase());
+}
+
+export function getAccessScope(host = getBrowserHost()): AccessScope {
+  return isLoopbackHost(host) ? 'local' : 'lan';
+}
+
+export function getAccessOrigin(port: number) {
+  return `${getBrowserProtocol()}//${getBrowserHost()}:${port}`;
 }
 
 function resolveHttpOrigin(port: number) {
@@ -37,9 +54,15 @@ export const VJ_SCREEN_BASE_URL = resolveConfiguredUrl(
 );
 
 export function getVjScreenUrl(screenId: string) {
-  return `${VJ_SCREEN_BASE_URL}/${encodeURIComponent(screenId)}`;
+  return `${getAccessOrigin(4302)}/screen/${encodeURIComponent(screenId)}`;
 }
 
 export function getBaofaScreenUrl(screenId: string) {
-  return `${BAOFA_NATIVE_URL}/screen/${encodeURIComponent(screenId)}`;
+  return `${getAccessOrigin(APP_PORT)}/screen/${encodeURIComponent(screenId)}`;
+}
+
+export function getScreenUrlForOwner(owner: ScreenOwner, screenId: string) {
+  if (owner === 'vj') return getVjScreenUrl(screenId);
+  if (owner === 'baofa') return getBaofaScreenUrl(screenId);
+  return null;
 }
