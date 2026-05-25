@@ -73,12 +73,21 @@ function getScreenFromPointer(clientX: number, clientY: number, rect: DOMRect, f
   return getNearestScreenId(col, row, fallback);
 }
 
+function createShowControlClientId(screenId: string) {
+  return `baofa-${screenId}-${createIdFragment()}`;
+}
+
 const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; label: string; intensity: number }> = [
   { mode: 'idle', label: 'Calm / 静止', intensity: 0.08 },
   { mode: 'flow', label: 'Flow / 流动', intensity: 0.42 },
   { mode: 'interaction', label: 'Pulse / 脉冲', intensity: 0.72 },
   { mode: 'climax', label: 'Climax / 高潮', intensity: 1 },
 ];
+
+const createIdFragment = () => {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ? uuid.slice(0, 8) : Math.random().toString(36).slice(2, 10);
+};
 
 function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
   const width = screen.width ?? 0.78;
@@ -238,7 +247,10 @@ export default function App() {
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
   const showControlRef = useRef<ReturnType<typeof createShowControlClient> | null>(null);
-  const showControlClientIdRef = useRef(`baofa-${screenId}-${crypto.randomUUID().slice(0, 8)}`);
+  const showControlClientIdRef = useRef<string | null>(null);
+  if (!showControlClientIdRef.current) {
+    showControlClientIdRef.current = createShowControlClientId(screenId);
+  }
   const showControlCommandRef = useRef<(command: ControlCommand) => void>(() => undefined);
   const useSampleLibraryRef = useRef(useSampleLibrary);
 

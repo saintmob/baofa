@@ -1,3 +1,4 @@
+import http from "node:http";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -12,6 +13,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  const server = http.createServer(app);
 
   // API health check
   app.get("/api/health", (req, res) => {
@@ -23,11 +25,10 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        host: "0.0.0.0",
-        port: APP_PORT,
-        strictPort: true,
-        hmr: false,
-        ws: false,
+        hmr: {
+          server,
+          clientPort: APP_PORT,
+        },
       },
       appType: "spa",
     });
@@ -44,7 +45,7 @@ async function startServer() {
     });
   }
 
-  app.listen(APP_PORT, "0.0.0.0", () => {
+  server.listen(APP_PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${APP_PORT}`);
   });
 }
