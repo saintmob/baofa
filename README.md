@@ -52,6 +52,18 @@ npm run start
 npm run lint
 ```
 
+## 局域网联调
+
+如果要让 4303 在局域网里跟 4300 / 4302 联调，请显式指定主机 IP，而不是依赖 `.env` 里的 `localhost` 示例值：
+
+```bash
+VITE_LAN_HOST=192.168.1.10 npm run dev
+```
+
+也可以设置为 `SHOW_LAN_HOST`。代码会优先使用这个主机 IP；如果不设置，则回退到当前浏览器访问到的主机名。
+
+如果你确实需要覆盖后端或屏幕跳转地址，也可以继续用 `VITE_SHOW_BACKEND_URL` / `VITE_SHOW_WS_URL` / `VITE_VJ_SCREEN_BASE_URL` / `VITE_BAOFA_NATIVE_URL`，但值为 `localhost`、`127.0.0.1`、`0.0.0.0` 时会被视为本地默认值并忽略。
+
 ## 固定端口
 
 baofa 固定使用：
