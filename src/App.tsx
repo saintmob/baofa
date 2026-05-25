@@ -9,7 +9,7 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
-import { BAOFA_NATIVE_URL, getAccessScope, getScreenUrlForOwner, getVjScreenUrl } from './lib/runtimeConfig';
+import { BAOFA_NATIVE_URL } from './lib/runtimeConfig';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles } from 'lucide-react';
@@ -224,7 +224,6 @@ export default function App() {
     showMenu: false,
   });
   const [screenRouteError, setScreenRouteError] = useState('');
-  const accessScope = getAccessScope();
   const intensityRef = useRef(0.08);
   const lastClickTimeRef = useRef(0);
   const treeGrowthRef = useRef(0);
@@ -620,8 +619,8 @@ export default function App() {
   useEffect(() => {
     if (!isKnownScreenId(routeScreenId)) return;
     if (!screenRoute || screenRoute.owner === 'baofa' || !screenPresentation.autoRedirect) return;
-    if (screenRoute.owner === 'vj') {
-      const targetUrl = getScreenUrlForOwner('vj', routeScreenId) || getVjScreenUrl(routeScreenId);
+    if (screenRoute.owner === 'vj' && screenRoute.url) {
+      const targetUrl = screenRoute.url;
       window.location.replace(targetUrl);
     }
   }, [routeScreenId, screenPresentation.autoRedirect, screenRoute]);
@@ -835,16 +834,6 @@ export default function App() {
         enabled: true,
         physicalIndex: index + 1,
       })),
-      screenRoutes: Object.fromEntries(SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => [
-        screen.id,
-        screenRoutes[screen.id] || {
-          screenId: screen.id,
-          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : 'baofa',
-          status: 'online',
-          source: 'baofa',
-          updatedAt: Date.now(),
-        },
-      ])),
       screenId,
       role: isMaster ? 'master' : 'screen',
       overview: isOverview,
@@ -858,7 +847,6 @@ export default function App() {
       screenPulse,
       audioStarted: isStarted,
       firebaseStatus: connectionStatus,
-      screenPresentation,
       visualMode,
       useSampleLibrary,
     });
@@ -873,9 +861,7 @@ export default function App() {
     mode,
     screenId,
     screenPulse,
-    screenPresentation,
     screenRoute,
-    screenRoutes,
     treeGrowth,
     useSampleLibrary,
     visualMode,
@@ -885,7 +871,7 @@ export default function App() {
   const debugEnabled = screenPresentation.showDebug || (screenPresentation.showMenu && showWebGLDebug);
 
   if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
-    const targetUrl = getScreenUrlForOwner('vj', routeScreenId) || getVjScreenUrl(routeScreenId);
+    const targetUrl = screenRoute.url;
 
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
@@ -902,12 +888,15 @@ export default function App() {
             <ExternalLink size={14} />
             Open VJ screen / 打开 VJ 屏
           </a>
-          {screenPresentation.autoRedirect && (
+          {screenPresentation.autoRedirect && targetUrl && (
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">
-              Redirecting automatically / 自动跳转中 ({accessScope})
+              Redirecting automatically / 自动跳转中
             </div>
           )}
-          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
+          {screenPresentation.autoRedirect && !targetUrl && (
+            <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Route URL unavailable</div>
+          )}
+          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Route fetch error</div>}
         </div>
       </div>
     );
@@ -1157,10 +1146,10 @@ export default function App() {
                   <span>Native baofa / 原生屏</span>
                   <span className="text-cyan-200/70">{BAOFA_NATIVE_URL}</span>
                 </div>
-                <div className="mt-1 flex items-center justify-between gap-3">
-                  <span>VJ external / 外部 VJ</span>
-                  <span className="text-cyan-200/70 break-all">{getVjScreenUrl(isMaster ? 'MASTER' : isOverview ? DEFAULT_SCREEN_ID : screenId)}</span>
-                </div>
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <span>VJ external / 外部 VJ</span>
+                <span className="text-cyan-200/70 break-all">{screenRoutes[screenId]?.url || 'Route URL unavailable'}</span>
+              </div>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
