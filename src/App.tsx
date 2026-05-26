@@ -1604,7 +1604,10 @@ export default function App() {
         }, 260);
       }
     } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
-      if (command.target === showControlClientIdRef.current || command.target === screenId) {
+      const normalizedTarget = normalizeScreenOccupancyId(command.target) || command.target;
+      const normalizedClientId = normalizeScreenOccupancyId(showControlClientIdRef.current) || showControlClientIdRef.current;
+      const normalizedScreenId = normalizeScreenOccupancyId(screenId) || screenId;
+      if (normalizedTarget === normalizedClientId || normalizedTarget === normalizedScreenId) {
         handleScreenChange(value);
       }
     } else if (command.command === 'setScreenAutoRedirect') {
