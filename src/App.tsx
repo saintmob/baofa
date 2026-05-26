@@ -1221,7 +1221,7 @@ export default function App() {
     stopAllLayers();
 
     if (soundEnabled && allowAudioStart) {
-      await startAudio();
+      await startAudio().catch(() => undefined);
     }
 
     syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.16, evolution: 0, fireworkState: 'launching' });
@@ -1582,7 +1582,7 @@ export default function App() {
         stopAllLayers();
       } else if (value === 'launching') {
         clearAutoTimeline();
-        void startAutoFireworkShow(false);
+        void startAutoFireworkShow(true);
       } else if (value === 'resetting') {
         clearAutoTimeline();
         setFireworkState('resetting');
