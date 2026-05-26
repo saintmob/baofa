@@ -20,9 +20,18 @@ export type ScreenPresentation = {
   showMenu: boolean;
 };
 
+export type ClientPresence = {
+  id: string;
+  module?: string;
+  role?: string;
+  status?: string;
+  screenId?: string;
+};
+
 export async function fetchScreenState(signal?: AbortSignal): Promise<{
   routes: Record<string, ScreenRoute>;
   presentation: ScreenPresentation;
+  clients: Record<string, ClientPresence>;
 }> {
   const headers: Record<string, string> = {};
   if (controlToken) headers['x-control-token'] = controlToken;
@@ -37,6 +46,7 @@ export async function fetchScreenState(signal?: AbortSignal): Promise<{
       showDebug: typeof presentation.showDebug === 'boolean' ? presentation.showDebug : false,
       showMenu: typeof presentation.showMenu === 'boolean' ? presentation.showMenu : false,
     },
+    clients: state?.clients || {},
   };
 }
 

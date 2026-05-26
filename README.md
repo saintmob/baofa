@@ -105,6 +105,13 @@ baofa 接收 4300 的命令：
 - `pulseScreen`
 - `setScreen`
 - `setVisualMode`
+- `setScreenOwner`
+- `setScreenRoutePreset`
+- `setScreenAutoRedirect`
+- `setScreenMenuVisible`
+- `setScreenDebugVisible`
+- `setScreenPresentation`
+- `setFireworkState`
 
 其中 `setVisualMode` 支持：
 

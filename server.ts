@@ -30,7 +30,14 @@ async function startServer() {
         host: "0.0.0.0",
         port: APP_PORT,
         strictPort: true,
-        hmr: false,
+        hmr: {
+          server,
+          host: "0.0.0.0",
+          port: APP_PORT,
+          clientPort: APP_PORT,
+          protocol: "ws",
+          overlay: false,
+        },
         ws: false,
         watch: {
           ignored: [

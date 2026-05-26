@@ -40,6 +40,11 @@ const databaseUrl = String(env.VITE_FIREBASE_DATABASE_URL || '').replace(/\/$/, 
 const showId = env.VITE_SHOW_ID || 'show-main';
 const transport = env.VITE_SHOW_TRANSPORT || 'auto';
 
+function createCommandId(prefix: string) {
+  const fragment = globalThis.crypto?.randomUUID?.()?.slice(0, 8) || Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${fragment}`;
+}
+
 export function createShowControlClient(options: ClientOptions) {
   if (shouldUseFirebase()) return createFirebaseClient(options);
   return createWebSocketClient(options);
@@ -106,6 +111,15 @@ function createWebSocketClient(options: ClientOptions) {
   connect();
 
   return {
+    sendCommand(command: ControlCommand) {
+      send({
+        ...command,
+        type: 'control.command',
+        id: command.id || createCommandId(options.clientId),
+        module: command.module || options.module,
+        issuedBy: command.issuedBy || options.clientId,
+      });
+    },
     publishState(patch: Record<string, unknown>) {
       const encoded = JSON.stringify(patch);
       if (encoded === lastPatch) return;
@@ -200,6 +214,17 @@ function createFirebaseClient(options: ClientOptions) {
   void connect();
 
   return {
+    async sendCommand(command: ControlCommand) {
+      const id = command.id || createCommandId(options.clientId);
+      await firebasePut(`${rootPath}/commands/${safePath(id)}`, {
+        ...command,
+        type: 'control.command',
+        id,
+        module: command.module || options.module,
+        issuedBy: command.issuedBy || options.clientId,
+        timestamp: command.timestamp || Date.now(),
+      });
+    },
     publishState(patch: Record<string, unknown>) {
       const encoded = JSON.stringify(patch);
       if (encoded === lastPatch) return;
