@@ -9,10 +9,10 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
-import { APP_PORT, BAOFA_NATIVE_URL, getVjScreenUrl } from './lib/runtimeConfig';
+import { APP_PORT, BAOFA_NATIVE_URL } from './lib/runtimeConfig';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, RotateCcw, Route, Sparkles, Volume2, VolumeX } from 'lucide-react';
+import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, Route, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
@@ -73,19 +73,26 @@ function getScreenFromPointer(clientX: number, clientY: number, rect: DOMRect, f
   return getNearestScreenId(col, row, fallback);
 }
 
+function createShowControlClientId(screenId: string) {
+  return `baofa-${screenId}-${createIdFragment()}`;
+}
+
+function normalizeScreenOccupancyId(value: string | null | undefined) {
+  if (!value) return '';
+  return value === 'MASTER' ? 'A1' : value;
+}
+
 const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; label: string; intensity: number }> = [
-  { mode: 'idle', label: 'Calm / 静止', intensity: 0.08 },
-  { mode: 'flow', label: 'Flow / 流动', intensity: 0.42 },
-  { mode: 'interaction', label: 'Pulse / 脉冲', intensity: 0.72 },
-  { mode: 'climax', label: 'Climax / 高潮', intensity: 1 },
+  { mode: 'idle', label: 'CALM / 静止', intensity: 0.08 },
+  { mode: 'flow', label: 'FLOW / 流动', intensity: 0.42 },
+  { mode: 'interaction', label: 'PULSE / 互动', intensity: 0.72 },
+  { mode: 'climax', label: 'CLIMAX / 高潮', intensity: 1 },
 ];
 
-const fireworkEffectModes: Array<{ kind: FireworkPanelBurstKind; label: string }> = [
-  { kind: 'small', label: 'Small / 小炸' },
-  { kind: 'medium', label: 'Triple / 中炸' },
-  { kind: 'large', label: 'Burst / 大炸' },
-  { kind: 'giant', label: 'Giant / 巨炸' },
-];
+const createIdFragment = () => {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ? uuid.slice(0, 8) : Math.random().toString(36).slice(2, 10);
+};
 
 function getLayoutStyle(screen: ScreenLayoutItem): React.CSSProperties {
   const width = screen.width ?? 0.78;
@@ -435,7 +442,7 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [treeControlMode, setTreeControlMode] = useState<TreeControlMode>('manual');
   const [fireworkControlMode, setFireworkControlMode] = useState<TreeControlMode>('manual');
-  const [fireworkPanelBurst, setFireworkPanelBurst] = useState<FireworkPanelBurstKind | null>(null);
+  const [fireworkState, setFireworkState] = useState<'standby' | 'launching' | 'resetting'>('standby');
   const [autoSceneOpacity, setAutoSceneOpacity] = useState(1);
   const [autoBlackout, setAutoBlackout] = useState(false);
   const [autoFishActive, setAutoFishActive] = useState(false);
@@ -458,7 +465,7 @@ export default function App() {
   const [screenRoutes, setScreenRoutes] = useState<Record<string, ScreenRoute>>({});
   const [screenPresentation, setScreenPresentation] = useState<ScreenPresentation>({
     autoRedirect: true,
-    showDebug: false,
+    showDebug: isLocalPreview,
     showMenu: isLocalPreview,
   });
   const [screenRouteError, setScreenRouteError] = useState('');
@@ -484,15 +491,31 @@ export default function App() {
   const autoTimelineTimersRef = useRef<number[]>([]);
   const autoTreeActiveRef = useRef(false);
   const autoFireworkActiveRef = useRef(false);
+  const audioAutoStartAllowedRef = useRef(true);
   const autoFishStartedAtRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
   const showControlRef = useRef<ReturnType<typeof createShowControlClient> | null>(null);
-  const showControlClientIdRef = useRef(`baofa-${screenId}-${crypto.randomUUID().slice(0, 8)}`);
+  const showControlClientIdRef = useRef<string | null>(null);
+  if (!showControlClientIdRef.current) {
+    showControlClientIdRef.current = createShowControlClientId(screenId);
+  }
   const showControlCommandRef = useRef<(command: ControlCommand) => void>(() => undefined);
   const useSampleLibraryRef = useRef(useSampleLibrary);
+  const refreshScreenState = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const { routes, presentation } = await fetchScreenState(signal);
+      setScreenRoutes(routes);
+      setScreenRoute(isKnownScreenId(routeScreenId) ? routes[routeScreenId] || null : null);
+      setScreenPresentation(presentation);
+      setScreenRouteError('');
+    } catch (error) {
+      if (signal?.aborted) return;
+      setScreenRouteError(error instanceof Error ? error.message : String(error));
+    }
+  }, [routeScreenId]);
 
   useEffect(() => {
     useSampleLibraryRef.current = useSampleLibrary;
@@ -739,7 +762,7 @@ export default function App() {
         intensityRef.current = Math.max(0.08, intensityRef.current - deltaMs / TREE_FADE_MS);
         evolutionRef.current = Math.max(0, evolutionRef.current - deltaMs / TREE_FADE_MS);
         setMusicEvolution(evolutionRef.current);
-        if (soundEnabled) {
+        if (soundEnabled && audioAutoStartAllowedRef.current) {
           updateTreeLayers(treeGrowthRef.current, evolutionRef.current, true);
         }
         if (treeGrowthRef.current <= 0.001) {
@@ -786,7 +809,7 @@ export default function App() {
           intensityRef.current = Math.min(1, intensityRef.current + 0.01);
           evolutionRef.current = Math.min(1, evolutionRef.current + 0.004);
           setMusicEvolution(evolutionRef.current);
-          if (soundEnabled) {
+          if (soundEnabled && audioAutoStartAllowedRef.current) {
             updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
           }
 
@@ -805,13 +828,13 @@ export default function App() {
             treeFadingRef.current = true;
             treePhaseRef.current = 'fading';
             setMode('flow');
-            if (autoTreeActiveRef.current && soundEnabled) {
+            if (autoTreeActiveRef.current && soundEnabled && audioAutoStartAllowedRef.current) {
               fadeTreeMusic(TREE_FADE_MS / 1000);
             }
           }
         } else {
           treePhaseRef.current = 'growing';
-          if (soundEnabled) {
+          if (soundEnabled && audioAutoStartAllowedRef.current) {
             updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
           }
         }
@@ -835,7 +858,7 @@ export default function App() {
       }
     }
 
-    if (soundEnabled && visualMode === 'tree' && !treeControllerRef.current) {
+    if (soundEnabled && audioAutoStartAllowedRef.current && visualMode === 'tree' && !treeControllerRef.current) {
       updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
     }
 
@@ -856,7 +879,7 @@ export default function App() {
       if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
       clearAutoTimeline();
     };
-  }, [clearAutoTimeline]);
+  }, [clearAutoTimeline, setVisualMode]);
 
   useEffect(() => {
     if (!treeTriggered || !treeControllerRef.current) return;
@@ -889,17 +912,10 @@ export default function App() {
     let timer = 0;
 
     const loadRoute = async () => {
-      try {
-        const { routes, presentation } = await fetchScreenState(controller.signal);
-        setScreenRoutes(routes);
-        setScreenRoute(isKnownScreenId(routeScreenId) ? routes[routeScreenId] || null : null);
-        setScreenPresentation(presentation);
-        setScreenRouteError('');
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setScreenRouteError(error instanceof Error ? error.message : String(error));
+      await refreshScreenState(controller.signal);
+      if (!controller.signal.aborted) {
+        timer = window.setTimeout(loadRoute, 2000);
       }
-      timer = window.setTimeout(loadRoute, 2000);
     };
 
     void loadRoute();
@@ -908,19 +924,20 @@ export default function App() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [routeScreenId]);
+  }, [refreshScreenState]);
 
   useEffect(() => {
     if (!isKnownScreenId(routeScreenId)) return;
     if (!screenRoute || screenRoute.owner === 'baofa' || !screenPresentation.autoRedirect) return;
-    if (screenRoute.owner === 'vj') {
-      window.location.replace(screenRoute.url || getVjScreenUrl(routeScreenId));
+    if (screenRoute.owner === 'vj' && screenRoute.url) {
+      const targetUrl = screenRoute.url;
+      window.location.replace(targetUrl);
     }
   }, [routeScreenId, screenPresentation.autoRedirect, screenRoute]);
 
   useEffect(() => {
-    localStorage.setItem('baofa-role', isMaster ? 'master' : 'screen');
-  }, [isMaster]);
+    localStorage.setItem('baofa-role', isOverview ? 'overview' : 'screen');
+  }, [isOverview]);
 
   useEffect(() => {
     localStorage.setItem('baofa-view', isOverview ? 'overview' : 'screen');
@@ -933,7 +950,7 @@ export default function App() {
     evolutionRef.current = 0;
   }, [setMusicEvolution, stopAllLayers, visualMode]);
 
-  const resetTreeGrowth = () => {
+  const resetTreeGrowth = (allowAudioStart = true) => {
     const shouldRestartAuto = treeControlMode === 'auto';
     clearAutoTimeline();
     if (!shouldRestartAuto) {
@@ -977,7 +994,7 @@ export default function App() {
     syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
     if (shouldRestartAuto) {
       window.setTimeout(() => {
-        void startAutoTreeShow();
+        void startAutoTreeShow(allowAudioStart);
       }, 260);
     }
   };
@@ -1005,10 +1022,52 @@ export default function App() {
 
   const handleScreenChange = (id: string) => {
     if (!isKnownScreenId(id)) return;
-    setScreenId(id);
-    setIsMaster(id === 'MASTER');
+    const nextScreenId = normalizeScreenOccupancyId(id) || id;
+    setScreenId(nextScreenId);
+    setIsMaster(false);
     setIsOverview(false);
   };
+
+  const openOverviewRoute = useCallback(() => {
+    localStorage.setItem('baofa-view', 'overview');
+    setIsOverview(true);
+    setIsMaster(false);
+    window.location.assign('/');
+  }, []);
+
+  const openScreenRoute = useCallback(async (id: string) => {
+    const route = screenRoutes[id];
+    if (!route?.url) return;
+
+    const currentScreenId = !isOverview ? normalizeScreenOccupancyId(screenId) || screenId : null;
+    if (currentScreenId) {
+      try {
+        const state = await fetchScreenState();
+        const occupiedClient = Object.values(state.clients).find((client) =>
+          client.module === 'interaction' &&
+          client.status === 'online' &&
+          client.id !== showControlClientIdRef.current &&
+          normalizeScreenOccupancyId(client.screenId) === normalizeScreenOccupancyId(id)
+        );
+        if (occupiedClient?.id) {
+          showControlRef.current?.sendCommand({
+            module: 'interaction',
+            target: occupiedClient.id,
+            command: 'setScreen',
+            value: currentScreenId,
+            issuedBy: showControlClientIdRef.current || 'baofa-screen',
+          });
+        }
+      } catch {
+        // If occupancy lookup fails, continue with the navigation. The route still resolves.
+      }
+    }
+
+    localStorage.setItem('baofa-view', 'screen');
+    setIsOverview(false);
+    setIsMaster(false);
+    window.location.assign(route.url);
+  }, [isOverview, screenId, screenRoutes]);
 
   const triggerAutoPulse = useCallback((sourceScreen: string, power: number) => {
     const point = getScreenWorldPoint(sourceScreen);
@@ -1042,14 +1101,15 @@ export default function App() {
     point: THREE.Vector3,
     kind: FireworkBurstKind,
     sourceScreen = screenId,
-    keepAliveMs = 650
+    keepAliveMs = 650,
+    allowAudioStart = true
   ) => {
     const timestamp = Date.now();
     const power = kind === 'large' ? 1 : kind === 'medium' ? 0.72 : 0.44;
     const nextIntensity = Math.min(1, Math.max(intensityRef.current, 0.2 + power * 0.8));
     const nextEvolution = Math.min(1, Math.max(evolutionRef.current, power));
 
-    if (soundEnabled) {
+    if (soundEnabled && allowAudioStart) {
       await triggerFireworkBurst(kind);
     }
 
@@ -1085,11 +1145,8 @@ export default function App() {
 
   const triggerFireworkPanelBurst = useCallback((kind: FireworkPanelBurstKind) => {
     if (fireworkControlMode === 'auto') return;
+    setFireworkState('launching');
     setVisualMode('firework');
-    setFireworkPanelBurst(kind);
-    window.setTimeout(() => {
-      setFireworkPanelBurst((current) => current === kind ? null : current);
-    }, kind === 'giant' ? 1800 : 900);
 
     const sourceScreen = isOverview ? 'F1' : screenId;
     const center = new THREE.Vector3(0, 0, 0);
@@ -1137,12 +1194,14 @@ export default function App() {
       [-0.15, -1.22],
       [-1.25, 1.78],
     ].forEach(([x, y], index) => schedule(index * 105, x, y, 'large', 1120));
-  }, [fireworkControlMode, isOverview, screenId, triggerFireworkAt]);
+  }, [fireworkControlMode, isOverview, screenId, setVisualMode, triggerFireworkAt]);
 
-  const startAutoFireworkShow = useCallback(async () => {
+  const startAutoFireworkShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
+    audioAutoStartAllowedRef.current = allowAudioStart;
     setVisualMode('firework');
     setFireworkControlMode('auto');
+    setFireworkState('launching');
     setTreeControlMode('manual');
     autoTreeActiveRef.current = false;
     autoFireworkActiveRef.current = true;
@@ -1161,11 +1220,11 @@ export default function App() {
     autoFishStartedAtRef.current = null;
     stopAllLayers();
 
-    if (soundEnabled) {
-      await startAudio();
+    if (soundEnabled && allowAudioStart) {
+      await startAudio().catch(() => undefined);
     }
 
-    syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.16, evolution: 0 });
+    syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.16, evolution: 0, fireworkState: 'launching' });
 
     const revealTimer = window.setTimeout(() => {
       setAutoBlackout(false);
@@ -1173,39 +1232,35 @@ export default function App() {
     }, 260);
     autoTimelineTimersRef.current.push(revealTimer);
 
-    const pattern: Array<{ t: number; x: number; y: number; kind: FireworkBurstKind }> = [
-      { t: 0, x: -7.8, y: 2.8, kind: 'small' },
-      { t: 900, x: -3.6, y: 1.4, kind: 'small' },
-      { t: 1800, x: 2.2, y: 3.1, kind: 'small' },
-      { t: 3100, x: 5.8, y: 0.4, kind: 'medium' },
-      { t: 3240, x: 5.2, y: 0.9, kind: 'medium' },
-      { t: 3380, x: 6.1, y: -0.2, kind: 'medium' },
-      { t: 5000, x: -5.8, y: -2.2, kind: 'small' },
-      { t: 6100, x: -1.6, y: -0.8, kind: 'small' },
-      { t: 7200, x: 1.8, y: 2.2, kind: 'medium' },
-      { t: 7350, x: 1.2, y: 1.8, kind: 'medium' },
-      { t: 7500, x: 2.4, y: 1.6, kind: 'medium' },
-      { t: 9200, x: -7.2, y: 0.1, kind: 'small' },
-      { t: 10400, x: 7.0, y: -2.6, kind: 'small' },
-      { t: 11800, x: -2.5, y: 3.2, kind: 'large' },
-      { t: 11940, x: -1.6, y: 2.7, kind: 'large' },
-      { t: 12080, x: -0.5, y: 2.1, kind: 'large' },
-      { t: 12220, x: 0.7, y: 1.5, kind: 'large' },
-      { t: 12360, x: 1.9, y: 0.9, kind: 'large' },
-      { t: 12500, x: 3.0, y: 0.2, kind: 'large' },
-      { t: 14600, x: -5.0, y: -3.0, kind: 'medium' },
-      { t: 14750, x: -4.2, y: -2.3, kind: 'medium' },
-      { t: 14900, x: -3.3, y: -1.8, kind: 'medium' },
-      { t: 16600, x: 3.7, y: 3.1, kind: 'small' },
-      { t: 17800, x: 0.2, y: -2.4, kind: 'large' },
-      { t: 17930, x: 1.0, y: -1.7, kind: 'large' },
-      { t: 18060, x: 1.9, y: -1.1, kind: 'large' },
-      { t: 18190, x: 2.8, y: -0.4, kind: 'large' },
-    ];
+    const screenIds = SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id);
+    const shuffledScreenIds = [...screenIds].sort(() => Math.random() - 0.5);
+    const firstWave = shuffledScreenIds.map((screen, index) => ({
+      t: 300 + index * (AUTO_FIREWORK_DURATION_MS * 0.42 / Math.max(1, shuffledScreenIds.length)),
+      screen,
+      kind: (['small', 'medium', 'large'] as FireworkBurstKind[])[index % 3],
+    }));
+    const extraBursts = Array.from({ length: 18 }, (_, index) => {
+      const screen = screenIds[Math.floor(Math.random() * screenIds.length)];
+      const kindPool: FireworkBurstKind[] = index % 7 === 0 ? ['large', 'large', 'medium'] : ['small', 'medium', 'large'];
+      return {
+        t: 1500 + Math.random() * (AUTO_FIREWORK_DURATION_MS - 1700),
+        screen,
+        kind: kindPool[Math.floor(Math.random() * kindPool.length)],
+      };
+    });
+    const randomPlan = [...firstWave, ...extraBursts]
+      .sort((a, b) => a.t - b.t)
+      .map(({ t, screen, kind }) => {
+        const center = getScreenWorldPoint(screen);
+        const spread = screen === 'A1' ? 2.4 : 4.2;
+        const x = center.x + (Math.random() - 0.5) * spread * 2;
+        const y = center.y + (Math.random() - 0.5) * spread * 1.4;
+        return { t, screen, kind, point: new THREE.Vector3(x, y, 0) };
+      });
 
-    pattern.forEach(({ t, x, y, kind }) => {
+    randomPlan.forEach(({ t, screen, kind, point }) => {
       const timer = window.setTimeout(() => {
-        void triggerFireworkAt(new THREE.Vector3(x, y, 0), kind, screenId, kind === 'large' ? 920 : 620);
+        void triggerFireworkAt(point, kind, screen, kind === 'large' || kind === 'giant' ? 920 : 620, allowAudioStart);
       }, AUTO_REVEAL_MS + t);
       autoTimelineTimersRef.current.push(timer);
     });
@@ -1215,6 +1270,7 @@ export default function App() {
       setInteractionPoint(null);
       setFireworkScratchPoint(null);
       setMode('idle');
+      setFireworkState('standby');
       intensityRef.current = 0.08;
       evolutionRef.current = 0;
       setIntensity(0.08);
@@ -1222,6 +1278,8 @@ export default function App() {
       stopAllLayers();
       setAutoSceneOpacity(0);
       setAutoBlackout(true);
+      setVisualMode('firework');
+      syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
       const blackoutTimer = window.setTimeout(() => {
         setFireworkControlMode('manual');
         setAutoBlackout(false);
@@ -1230,10 +1288,11 @@ export default function App() {
       autoTimelineTimersRef.current.push(blackoutTimer);
     }, AUTO_REVEAL_MS + AUTO_FIREWORK_DURATION_MS);
     autoTimelineTimersRef.current.push(endTimer);
-  }, [clearAutoTimeline, screenId, setMusicEvolution, soundEnabled, startAudio, stopAllLayers, syncToFirebase, triggerFireworkAt]);
+  }, [clearAutoTimeline, screenId, setFireworkState, setMusicEvolution, setVisualMode, soundEnabled, startAudio, stopAllLayers, syncToFirebase, triggerFireworkAt]);
 
-  const startAutoTreeShow = useCallback(async () => {
+  const startAutoTreeShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
+    audioAutoStartAllowedRef.current = allowAudioStart;
     setVisualMode('tree');
     setTreeControlMode('auto');
     setFireworkControlMode('manual');
@@ -1270,7 +1329,7 @@ export default function App() {
     setInteractionPoint(null);
     setScreenPulse(null);
 
-    if (soundEnabled) {
+    if (soundEnabled && allowAudioStart) {
       await startAudio();
       restartTreeMusic(false, AUTO_MUSIC_PLAYBACK_RATE);
       updateTreeLayers(0, 0, false);
@@ -1326,7 +1385,7 @@ export default function App() {
       setMode('flow');
       setInteractionPoint(null);
       setMusicEvolution(evolutionRef.current);
-      if (soundEnabled) {
+      if (soundEnabled && audioAutoStartAllowedRef.current) {
         updateTreeLayers(treeGrowthRef.current, evolutionRef.current, false);
       }
       syncToFirebase({
@@ -1347,11 +1406,13 @@ export default function App() {
     setTreeControlMode('manual');
     setAutoBlackout(false);
     setAutoSceneOpacity(1);
-  }, [clearAutoTimeline]);
+  }, [clearAutoTimeline, setVisualMode]);
 
   const setManualFireworkControl = useCallback(() => {
     clearAutoTimeline();
     setFireworkControlMode('manual');
+    setVisualMode('firework');
+    setFireworkState('standby');
     setAutoBlackout(false);
     setAutoSceneOpacity(1);
     autoFireworkActiveRef.current = false;
@@ -1360,6 +1421,7 @@ export default function App() {
   const handleSplashPointerDown = async (e: React.PointerEvent) => {
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
+    audioAutoStartAllowedRef.current = true;
 
     const canStartIdleRound =
       treeGrowthRef.current <= 0 &&
@@ -1480,9 +1542,16 @@ export default function App() {
 
     if ((command.command === 'setMode' || command.command === 'setInteractionMode') && typeof value === 'string') {
       if (value === 'idle' || value === 'interaction' || value === 'flow' || value === 'climax') {
-        setVisualMode('tree');
-        setMode(value);
-        syncToFirebase({ mode: value, visualMode: 'tree' });
+        clearAutoTimeline();
+        setTreeControlMode('manual');
+        setFireworkControlMode('manual');
+        setFireworkState('standby');
+        setAutoBlackout(false);
+        setAutoSceneOpacity(1);
+        const preset = effectModes.find((effect) => effect.mode === value);
+        if (preset) {
+          applyEffectMode(preset.mode, preset.intensity);
+        }
       }
     } else if (command.command === 'setIntensity' && typeof value === 'number') {
       const next = Math.max(0, Math.min(1, value));
@@ -1490,13 +1559,78 @@ export default function App() {
       setIntensity(next);
       syncToFirebase({ intensity: next });
     } else if (command.command === 'resetTree') {
-      resetTreeGrowth();
+      resetTreeGrowth(false);
     } else if (command.command === 'setVisualMode' && typeof value === 'string') {
       if (value === 'tree' || value === 'firework') {
+        clearAutoTimeline();
+        setTreeControlMode('manual');
+        setFireworkControlMode('manual');
+        setFireworkState('standby');
+        setAutoBlackout(false);
+        setAutoSceneOpacity(1);
         setVisualMode(value);
       }
+    } else if (command.command === 'setFireworkState' && typeof value === 'string') {
+      if (value === 'standby') {
+        clearAutoTimeline();
+        setManualFireworkControl();
+        setMode('idle');
+        setIntensity(0.08);
+        setMusicEvolution(0);
+        setInteractionPoint(null);
+        setFireworkScratchPoint(null);
+        stopAllLayers();
+      } else if (value === 'launching') {
+        clearAutoTimeline();
+        void startAutoFireworkShow(true);
+      } else if (value === 'resetting') {
+        clearAutoTimeline();
+        setFireworkState('resetting');
+        setFireworkControlMode('manual');
+        setAutoBlackout(false);
+        setAutoSceneOpacity(1);
+        autoFireworkActiveRef.current = false;
+        setVisualMode('firework');
+        setMode('idle');
+        setIntensity(0.08);
+        setMusicEvolution(0);
+        setInteractionPoint(null);
+        setFireworkScratchPoint(null);
+        stopAllLayers();
+        syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'resetting' });
+        window.setTimeout(() => {
+          setFireworkState('standby');
+          syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
+        }, 260);
+      }
     } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
-      handleScreenChange(value);
+      if (command.target === showControlClientIdRef.current || command.target === screenId) {
+        handleScreenChange(value);
+      }
+    } else if (command.command === 'setScreenAutoRedirect') {
+      setScreenPresentation((prev) => ({
+        ...prev,
+        autoRedirect: typeof value === 'boolean' ? value : Boolean(value),
+      }));
+    } else if (command.command === 'setScreenMenuVisible') {
+      setScreenPresentation((prev) => ({
+        ...prev,
+        showMenu: typeof value === 'boolean' ? value : Boolean(value),
+      }));
+    } else if (command.command === 'setScreenDebugVisible') {
+      setScreenPresentation((prev) => ({
+        ...prev,
+        showDebug: typeof value === 'boolean' ? value : Boolean(value),
+      }));
+    } else if (command.command === 'setScreenPresentation' && value && typeof value === 'object') {
+      const presentation = value as Partial<ScreenPresentation>;
+      setScreenPresentation((prev) => ({
+        autoRedirect: typeof presentation.autoRedirect === 'boolean' ? presentation.autoRedirect : prev.autoRedirect,
+        showDebug: typeof presentation.showDebug === 'boolean' ? presentation.showDebug : prev.showDebug,
+        showMenu: typeof presentation.showMenu === 'boolean' ? presentation.showMenu : prev.showMenu,
+      }));
+    } else if (command.command === 'setScreenOwner' || command.command === 'setScreenRoutePreset') {
+      void refreshScreenState();
     } else if (command.command === 'pulseScreen') {
       const source = typeof value === 'string' && isKnownScreenId(value)
         ? value
@@ -1507,7 +1641,29 @@ export default function App() {
       setScreenPulse({ source, timestamp });
       syncToFirebase({ screenPulse: { source, timestamp } });
     }
-  }, [screenId, syncToFirebase]);
+  }, [
+    applyEffectMode,
+    clearAutoTimeline,
+    handleScreenChange,
+    refreshScreenState,
+    resetTreeGrowth,
+    screenId,
+    setFireworkState,
+    setAutoBlackout,
+    setAutoSceneOpacity,
+    setFireworkControlMode,
+    setFireworkScratchPoint,
+    setIntensity,
+    setInteractionPoint,
+    setMode,
+    setMusicEvolution,
+    setManualFireworkControl,
+    setTreeControlMode,
+    setVisualMode,
+    startAutoFireworkShow,
+    stopAllLayers,
+    syncToFirebase
+  ]);
 
   showControlCommandRef.current = applyShowControlCommand;
 
@@ -1515,7 +1671,7 @@ export default function App() {
     showControlRef.current = createShowControlClient({
       module: 'interaction',
       clientId: showControlClientIdRef.current,
-      role: isMaster ? 'master' : isOverview ? 'overview' : 'screen',
+      role: isOverview ? 'overview' : 'screen',
       capabilities: ['module.statePatch', 'control.command', 'interaction.topology', 'interaction.pulse'],
       onStatus: setShowControlStatus,
       onCommand: (command) => showControlCommandRef.current(command),
@@ -1534,18 +1690,8 @@ export default function App() {
         enabled: true,
         physicalIndex: index + 1,
       })),
-      screenRoutes: Object.fromEntries(SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => [
-        screen.id,
-        screenRoutes[screen.id] || {
-          screenId: screen.id,
-          owner: screenRoute?.screenId === screen.id ? screenRoute.owner : 'baofa',
-          status: 'online',
-          source: 'baofa',
-          updatedAt: Date.now(),
-        },
-      ])),
       screenId,
-      role: isMaster ? 'master' : 'screen',
+      role: isOverview ? 'overview' : 'screen',
       overview: isOverview,
       mode,
       intensity,
@@ -1557,9 +1703,14 @@ export default function App() {
       screenPulse,
       audioStarted: isStarted,
       firebaseStatus: connectionStatus,
-      screenPresentation,
       visualMode,
+      fireworkState,
       useSampleLibrary,
+      screenPresentation: {
+        autoRedirect: screenPresentation.autoRedirect,
+        showMenu: screenPresentation.showMenu,
+        showDebug: screenPresentation.showDebug,
+      },
     });
   }, [
     connectionStatus,
@@ -1572,10 +1723,12 @@ export default function App() {
     mode,
     screenId,
     screenPulse,
-    screenPresentation,
     screenRoute,
-    screenRoutes,
     treeGrowth,
+    fireworkState,
+    screenPresentation.autoRedirect,
+    screenPresentation.showDebug,
+    screenPresentation.showMenu,
     useSampleLibrary,
     visualMode,
   ]);
@@ -1583,12 +1736,20 @@ export default function App() {
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
   const shouldShowMenu = screenPresentation.showMenu || isLocalPreview;
   const debugEnabled = screenPresentation.showDebug || (shouldShowMenu && showWebGLDebug);
-  const autoFishScreenId = isOverview ? 'OVERVIEW' : isMaster ? 'A1' : screenId;
+  const autoFishScreenId = isOverview ? 'OVERVIEW' : screenId;
+  const focusedScreenId = isOverview ? 'OVERVIEW' : screenId;
   const autoFishStage = autoFishActive ? getFishStagePosition(autoFishProgress) : null;
   const activeControlMode = visualMode === 'firework' ? fireworkControlMode : treeControlMode;
+  const currentTreeLabel = effectModes.find((effect) => effect.mode === mode)?.label ?? 'CALM / 静止';
+  const fireworkStateLabel =
+    fireworkState === 'launching'
+      ? 'LAUNCHING / 燃放'
+      : fireworkState === 'resetting'
+        ? 'RESETTING / 重置'
+        : 'STANDBY / 待机';
 
-  if (!isLocalPreview && isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
-    const targetUrl = screenRoute.url || getVjScreenUrl(routeScreenId);
+  if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
+    const targetUrl = screenRoute.url;
 
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
@@ -1605,10 +1766,15 @@ export default function App() {
             <ExternalLink size={14} />
             Open VJ screen / 打开 VJ 屏
           </a>
-          {screenPresentation.autoRedirect && (
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">Redirecting automatically / 自动跳转中</div>
+          {screenPresentation.autoRedirect && targetUrl && (
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">
+              Redirecting automatically / 自动跳转中
+            </div>
           )}
-          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Using last route</div>}
+          {screenPresentation.autoRedirect && !targetUrl && (
+            <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Route URL unavailable</div>
+          )}
+          {screenRouteError && <div className="text-[9px] font-mono uppercase tracking-widest text-amber-200/50">Route fetch error</div>}
         </div>
       </div>
     );
@@ -1647,7 +1813,7 @@ export default function App() {
               interactionPoint={interactionPoint}
               mode={evolution > 0.8 ? 'climax' : mode}
               intensity={intensity}
-              screenId={isOverview ? 'OVERVIEW' : isMaster ? 'MASTER' : screenId}
+              screenId={focusedScreenId}
               treeGrowth={treeGrowth}
               gestureActive={gestureActive}
               pulseSource={screenPulse?.source}
@@ -1745,52 +1911,6 @@ export default function App() {
             <Activity size={18} />
           </button>
           <button
-            onClick={() => {
-              clearAutoTimeline();
-              setTreeControlMode('manual');
-              setFireworkControlMode('manual');
-              setAutoBlackout(false);
-              setAutoSceneOpacity(1);
-              setVisualMode((value) => value === 'tree' ? 'firework' : 'tree');
-            }}
-            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
-              visualMode === 'firework'
-                ? 'border-fuchsia-300/50 bg-fuchsia-300/15 text-fuchsia-100'
-                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
-            }`}
-            title={visualMode === 'firework' ? 'Firework particle scene on' : 'Tree particle scene on'}
-            aria-pressed={visualMode === 'firework'}
-          >
-            <Sparkles size={15} />
-            {visualMode === 'firework' ? 'Firework' : 'Tree'}
-          </button>
-          <button
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (visualMode === 'firework') {
-                if (fireworkControlMode === 'auto') {
-                  setManualFireworkControl();
-                } else {
-                  void startAutoFireworkShow();
-                }
-              } else if (treeControlMode === 'auto') {
-                setManualTreeControl();
-              } else {
-                void startAutoTreeShow();
-              }
-            }}
-            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
-              activeControlMode === 'auto'
-                ? 'border-cyan-200/70 bg-cyan-200/18 text-cyan-50'
-                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
-            }`}
-            title={activeControlMode === 'auto' ? `${visualMode === 'firework' ? 'Firework' : 'Tree'} automation on` : `${visualMode === 'firework' ? 'Firework' : 'Tree'} manual mode`}
-            aria-pressed={activeControlMode === 'auto'}
-          >
-            {activeControlMode === 'auto' ? 'Auto' : 'Manual'}
-          </button>
-          <button
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
@@ -1821,6 +1941,7 @@ export default function App() {
                 if (!next) {
                   stopAllLayers();
                 } else if (visualMode === 'tree') {
+                  audioAutoStartAllowedRef.current = true;
                   void startAudio().then(() => {
                     updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
                   });
@@ -1884,28 +2005,17 @@ export default function App() {
                 <div>
                   <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/70">Screen Routing / 屏幕排序</div>
                   <div className="mt-1 text-[10px] font-mono uppercase tracking-[0.16em] text-cyan-300/60">
-                    {isOverview ? 'All Screens Preview / 全屏预览' : isMaster ? `Display ${getScreenDisplayId('MASTER')} / 主屏位置` : `Display ${getScreenDisplayId(screenId)} / 显示屏 ${getScreenDisplayId(screenId)}`}
+                    {isOverview ? 'All Screens Preview / 全屏预览' : `Display ${getScreenDisplayId(screenId)} / 显示屏 ${getScreenDisplayId(screenId)}`}
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setIsOverview((value) => !value)}
+                    onClick={openOverviewRoute}
                     className={`h-9 px-3 rounded border text-[10px] font-mono uppercase tracking-widest transition flex items-center gap-2 ${isOverview ? 'border-emerald-300/50 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/5 text-white/45'}`}
                     aria-label="Overview"
                   >
                     <LayoutGrid size={14} />
                     Overview / 总览
-                  </button>
-                  <button
-                    onClick={() => {
-                      const next = !isMaster;
-                      setIsMaster(next);
-                      setScreenId(next ? 'MASTER' : DEFAULT_SCREEN_ID);
-                      setIsOverview(false);
-                    }}
-                    className={`h-9 px-3 rounded border text-[10px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-200' : 'border-white/10 bg-white/5 text-white/45'}`}
-                  >
-                    {getScreenDisplayId('MASTER')} / 主屏
                   </button>
                 </div>
               </div>
@@ -1915,16 +2025,16 @@ export default function App() {
                 style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
               >
                 <button
-                  onClick={() => handleScreenChange('MASTER')}
-                  className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${isMaster && !isOverview ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
+                  onClick={() => openScreenRoute('A1')}
+                  className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${!isOverview && normalizeScreenOccupancyId(screenId) === 'A1' ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
                   style={getLayoutStyle(MASTER_SCREEN)}
                 >
-                  {getScreenDisplayId('MASTER')}
+                  {getScreenDisplayId('A1')}
                 </button>
                 {SCREEN_LAYOUT_ITEMS.map((screen) => (
                   <button
                     key={screen.id}
-                    onClick={() => handleScreenChange(screen.id)}
+                    onClick={() => openScreenRoute(screen.id)}
                     className={`absolute rounded-sm border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === screen.id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
                     style={getLayoutStyle(screen)}
                   >
@@ -1938,65 +2048,148 @@ export default function App() {
                   <span>Native baofa / 原生屏</span>
                   <span className="text-cyan-200/70">{BAOFA_NATIVE_URL}</span>
                 </div>
-                <div className="mt-1 flex items-center justify-between gap-3">
-                  <span>VJ external / 外部 VJ</span>
-                  <span className="text-cyan-200/70 break-all">{getVjScreenUrl(isMaster ? 'MASTER' : isOverview ? DEFAULT_SCREEN_ID : screenId)}</span>
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <span>VJ external / 外部 VJ</span>
+                <span className="text-cyan-200/70 break-all">{screenRoutes[screenId]?.url || 'Route URL unavailable'}</span>
+              </div>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Mode / 模式</div>
+                      <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-300/55">
+                        {visualMode === 'firework' ? 'Fireworks / 烟花' : 'Tree / 树'}
+                      </div>
+                    </div>
+                    <div className="segmented-control" aria-label="Mode switch">
+                      <button
+                        type="button"
+                        className={visualMode === 'tree' ? 'selected' : ''}
+                        onClick={() => setVisualMode('tree')}
+                      >
+                        Tree
+                      </button>
+                      <button
+                        type="button"
+                        className={visualMode === 'firework' ? 'selected' : ''}
+                        onClick={() => setVisualMode('firework')}
+                      >
+                        Fireworks
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                {visualMode === 'firework'
-                  ? fireworkEffectModes.map((effect) => (
+                {visualMode === 'tree' ? (
+                  <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Tree / 树控制</div>
+                        <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-300/55">{currentTreeLabel}</div>
+                      </div>
+                      <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-100/80">
+                        {currentTreeLabel}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {effectModes.map((effect) => (
+                        <button
+                          key={effect.mode}
+                          onClick={() => applyEffectMode(effect.mode, effect.intensity)}
+                          className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                            mode === effect.mode
+                              ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
+                              : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                          }`}
+                        >
+                          {effect.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
-                        key={effect.kind}
-                        onClick={() => triggerFireworkPanelBurst(effect.kind)}
-                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
-                          fireworkPanelBurst === effect.kind
-                            ? 'border-fuchsia-200/70 bg-fuchsia-300/18 text-fuchsia-50'
-                            : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
-                        }`}
+                        type="button"
+                        onClick={() => {
+                          clearSequence();
+                          resetTreeGrowth();
+                        }}
                       >
-                        {effect.label}
+                        Reset tree / 重置树
                       </button>
-                    ))
-                  : effectModes.map((effect) => (
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Fireworks / 烟花控制</div>
+                        <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-fuchsia-300/55">{fireworkStateLabel}</div>
+                      </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] ${
+                        fireworkState === 'launching'
+                          ? 'border-fuchsia-200/60 bg-fuchsia-300/12 text-fuchsia-50'
+                          : fireworkState === 'resetting'
+                            ? 'border-amber-200/60 bg-amber-300/12 text-amber-50'
+                            : 'border-white/10 bg-white/5 text-white/55'
+                      }`}>
+                        {fireworkStateLabel}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
                       <button
-                        key={effect.mode}
-                        onClick={() => applyEffectMode(effect.mode, effect.intensity)}
-                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
-                          mode === effect.mode
-                            ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
-                            : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
-                        }`}
+                        type="button"
+                        className={fireworkState === 'standby' ? 'selected' : ''}
+                        onClick={() => {
+                          clearAutoTimeline();
+                          setManualFireworkControl();
+                          setMode('idle');
+                          setIntensity(0.08);
+                          setMusicEvolution(0);
+                          setInteractionPoint(null);
+                          setFireworkScratchPoint(null);
+                          stopAllLayers();
+                          setFireworkState('standby');
+                        }}
                       >
-                        {effect.label}
+                        Standby / 待机
                       </button>
-                    ))}
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={() => {
-                    if (visualMode === 'firework') {
-                      setManualFireworkControl();
-                      intensityRef.current = 0.08;
-                      evolutionRef.current = 0;
-                      setIntensity(0.08);
-                      setMusicEvolution(0);
-                      setInteractionPoint(null);
-                      setFireworkScratchPoint(null);
-                      setFireworkPanelBurst(null);
-                      setMode('idle');
-                      stopAllLayers();
-                    } else {
-                      resetTreeGrowth();
-                    }
-                  }}
-                  className="h-10 rounded border border-white/10 bg-white/5 px-4 text-white/55 text-[10px] font-mono uppercase tracking-widest flex items-center justify-center gap-2"
-                >
-                  <RotateCcw size={15} />
-                  Reset / 重置
-                </button>
+                      <button
+                        type="button"
+                        className={fireworkState === 'launching' ? 'selected' : ''}
+                        onClick={() => void startAutoFireworkShow()}
+                      >
+                        Launch / 燃放
+                      </button>
+                      <button
+                        type="button"
+                        className={fireworkState === 'resetting' ? 'selected' : ''}
+                        onClick={() => {
+                          clearAutoTimeline();
+                          setFireworkState('resetting');
+                          setFireworkControlMode('manual');
+                          setAutoBlackout(false);
+                          setAutoSceneOpacity(1);
+                          autoFireworkActiveRef.current = false;
+                          setMode('idle');
+                          setIntensity(0.08);
+                          setMusicEvolution(0);
+                          setInteractionPoint(null);
+                          setFireworkScratchPoint(null);
+                          stopAllLayers();
+                          syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'resetting' });
+                          window.setTimeout(() => {
+                            setFireworkState('standby');
+                            syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
+                          }, 260);
+                        }}
+                      >
+                        Reset / 重置
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 h-1 rounded-full bg-white/10 overflow-hidden">
@@ -2077,7 +2270,7 @@ export default function App() {
               Motion / 手势: {hasHandDetected ? (openHandCount > 0 ? `Open x${openHandCount} / 展开 ${openHandCount}` : 'Paused / 暂停') : 'Scanning / 扫描中'}
             </span>
           ) : (
-            `${isOverview ? 'Overview / 总览' : isMaster ? `${getScreenDisplayId('MASTER')} / 主屏` : `${getScreenDisplayId(screenId)} / 显示屏`} / Camera Offline / 摄像头离线`
+            `${isOverview ? 'Overview / 总览' : `${getScreenDisplayId(screenId)} / 显示屏`} / Camera Offline / 摄像头离线`
           )}
         </div>
       </div>
