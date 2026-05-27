@@ -20,8 +20,20 @@ interface ParticleSceneProps {
   pulseTime?: number;
   autoFishStage?: { col: number; row: number; angle: number } | null;
   autoFishProgress?: number;
+  autoFishRevealActive?: boolean;
   isStarted?: boolean;
   isPaused?: boolean;
+}
+
+const AUTO_FISH_PATH = ['A1', 'B2', 'B3', 'B4', 'B5', 'D2', 'D1', 'L1', 'E1', 'R2', 'F1'];
+const AUTO_FISH_GATHER_FRACTION = 0.2;
+
+function getAutoFishScreenRevealProgress(id?: string) {
+  if (!id) return null;
+  const index = AUTO_FISH_PATH.indexOf(id);
+  if (index < 0) return null;
+  const travelLeaveProgress = index >= AUTO_FISH_PATH.length - 1 ? 1 : (index + 1) / (AUTO_FISH_PATH.length - 1);
+  return AUTO_FISH_GATHER_FRACTION + travelLeaveProgress * (1 - AUTO_FISH_GATHER_FRACTION);
 }
 
 function getScreenCenter(screenId = DEFAULT_SCREEN_ID) {
@@ -70,6 +82,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   pulseTime,
   autoFishStage,
   autoFishProgress = 0,
+  autoFishRevealActive = false,
   isStarted,
   isPaused
 }) => {
@@ -94,8 +107,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const energyCount = 6200;
   const pollenCount = 9800;
   const glyphCount = 1900;
-  const idleBlockCount = 2600;
-  const shardCount = 90;
+  const idleBlockCount = 1700;
+  const shardCount = 48;
   const opacityRef = useRef(0);
   const colorRef = useRef(new THREE.Color("#22d3ee"));
   const squareMatrixObject = useMemo(() => new THREE.Object3D(), []);
@@ -116,6 +129,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const previewDensity = isOverviewScreen ? 0.34 : 1;
   const previewBrightness = isOverviewScreen ? 0.34 : 1;
   const glyphTexture = useMemo(() => createGlyphTexture(), []);
+  const screenLayouts = useMemo(() => Object.values(SCREEN_LAYOUT), []);
   const screenCenters = useMemo(() => Object.entries(SCREEN_LAYOUT).map(([id, layout]) => {
     const point = layoutToWorldPoint(layout);
     return {
@@ -246,13 +260,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
   const mistPositions = useMemo(() => {
     const pos = new Float32Array(mistCount * 3);
-    const screens = Object.values(SCREEN_LAYOUT);
-    const particlesPerScreen = Math.ceil(mistCount / screens.length);
+    const particlesPerScreen = Math.ceil(mistCount / screenLayouts.length);
     const gridCols = 80;
     const gridRows = Math.ceil(particlesPerScreen / gridCols);
     for (let i = 0; i < mistCount; i++) {
-      const screen = screens[i % screens.length];
-      const localIndex = Math.floor(i / screens.length);
+      const screen = screenLayouts[i % screenLayouts.length];
+      const localIndex = Math.floor(i / screenLayouts.length);
       const gridX = localIndex % gridCols;
       const gridY = Math.floor(localIndex / gridCols) % gridRows;
       const offsetX = ((gridX + Math.random()) / gridCols - 0.5) * 11.2;
@@ -263,7 +276,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       pos[i * 3 + 2] = (Math.random() - 0.5) * 14;
     }
     return pos;
-  }, [mistCount]);
+  }, [mistCount, screenLayouts]);
+  const mistInitialPositions = useMemo(() => new Float32Array(mistPositions), [mistPositions]);
 
   const squareData = useMemo(() => {
     const squares: Array<{
@@ -273,12 +287,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       drift: THREE.Vector3;
       phase: number;
       speed: number;
-      screen: { col: number; row: number };
+      screen: { id?: string; col: number; row: number };
     }> = [];
-    const squaresPerScreen = 72;
-    const squareCols = 14;
+    const squaresPerScreen = 36;
+    const squareCols = 9;
     const squareRows = Math.ceil(squaresPerScreen / squareCols);
-    Object.values(SCREEN_LAYOUT).forEach((screen) => {
+    screenLayouts.forEach((screen) => {
       for (let i = 0; i < squaresPerScreen; i++) {
         const gridX = i % squareCols;
         const gridY = Math.floor(i / squareCols) % squareRows;
@@ -305,7 +319,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       }
     });
     return squares;
-  }, []);
+  }, [screenLayouts]);
 
   const idleBlockData = useMemo(() => {
     const blocks: Array<{
@@ -767,6 +781,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const fishImpactPresence = fishPoint
       ? THREE.MathUtils.smoothstep(autoFishProgress, 0.02, 0.12) * (1 - THREE.MathUtils.smoothstep(autoFishProgress, 0.9, 1))
       : 0;
+    const fishRouteBlanket = fishPoint
+      ? THREE.MathUtils.smoothstep(autoFishProgress, 0.01, 0.08) * (1 - THREE.MathUtils.smoothstep(autoFishProgress, 0.86, 0.98))
+      : 0;
+    const fishLoadShed = fishImpactPresence * (isOverviewScreen ? 0.82 : 0.58);
     const tempoPalette = [
       new THREE.Color("#22d3ee"),
       new THREE.Color("#38bdf8"),
@@ -827,26 +845,26 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
       if (mistRef.current) {
         const mistMat = mistRef.current.material as THREE.PointsMaterial;
-        mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25) * (isOverviewScreen ? 0.58 : 1);
+        mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25) * (isOverviewScreen ? 0.58 : 1) * (1 - fishLoadShed * 0.72);
         mistMat.size = (0.05 + Math.max(idleMist, interactionPreview) * 0.07 + intensity * 0.06) * (isOverviewScreen ? 0.74 : 1);
         mistMat.color.copy(tempoColor);
-        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1)));
+        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1) * (1 - fishLoadShed * 0.78)));
       }
 
       if (energyRef.current) {
         const energyMat = energyRef.current.material as THREE.PointsMaterial;
-        energyMat.opacity = Math.min(1, 0.24 + intensity * 0.9 + bloomPhase * 0.34 + (gestureActive ? 0.25 : 0)) * previewBrightness;
+        energyMat.opacity = Math.min(1, 0.24 + intensity * 0.9 + bloomPhase * 0.34 + (gestureActive ? 0.25 : 0)) * previewBrightness * (1 - fishLoadShed * 0.68);
         energyMat.size = (0.035 + intensity * 0.08 + bloomPhase * 0.045 + (gestureActive ? 0.03 : 0)) * (isOverviewScreen ? 0.72 : 1);
         energyMat.color.copy(bloomColor);
-        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity));
+        energyRef.current.geometry.setDrawRange(0, Math.floor(energyCount * Math.min(1, visibleGrowth * particleSurge) * previewDensity * (1 - fishLoadShed * 0.68)));
       }
 
       if (pollenRef.current) {
         const pollenMat = pollenRef.current.material as THREE.PointsMaterial;
-        pollenMat.opacity = Math.min(0.9, 0.08 + visibleGrowth * 0.58 + intensity * 0.16 + bloomPhase * 0.28) * (isOverviewScreen ? 0.3 : 1);
+        pollenMat.opacity = Math.min(0.9, 0.08 + visibleGrowth * 0.58 + intensity * 0.16 + bloomPhase * 0.28) * (isOverviewScreen ? 0.3 : 1) * (1 - fishLoadShed * 0.62);
         pollenMat.size = (0.06 + intensity * 0.065 + bloomPhase * 0.035) * (isOverviewScreen ? 0.58 : 1);
         pollenMat.color.copy(bloomColor);
-        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * Math.min(1, visibleGrowth * particleSurge) * (isOverviewScreen ? 0.28 : 1)));
+        pollenRef.current.geometry.setDrawRange(0, Math.floor(pollenCount * Math.min(1, visibleGrowth * particleSurge) * (isOverviewScreen ? 0.28 : 1) * (1 - fishLoadShed * 0.62)));
       }
 
       if (glyphRef.current) {
@@ -975,6 +993,59 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       posAttr.needsUpdate = true;
     }
 
+    if (mistRef.current) {
+      const posAttr = mistRef.current.geometry.attributes.position;
+      const stride = autoFishRevealActive ? 1 : fishImpactPresence > 0.02 ? (isOverviewScreen ? 3 : 2) : 10;
+      for (let i = 0; i < mistCount; i += stride) {
+        const ix = i * 3;
+        const baseX = mistInitialPositions[ix];
+        const baseY = mistInitialPositions[ix + 1];
+        const baseZ = mistInitialPositions[ix + 2];
+        const mistScreen = screenLayouts[i % screenLayouts.length];
+        const revealProgress = getAutoFishScreenRevealProgress(mistScreen.id);
+        const screenPendingFishReveal =
+          autoFishRevealActive &&
+          revealProgress !== null &&
+          autoFishProgress < revealProgress;
+
+        if (screenPendingFishReveal) {
+          posAttr.array[ix] = 9999;
+          posAttr.array[ix + 1] = 9999;
+          posAttr.array[ix + 2] = 0;
+          continue;
+        }
+
+        if (posAttr.array[ix] > 9000) {
+          posAttr.array[ix] = baseX;
+          posAttr.array[ix + 1] = baseY;
+          posAttr.array[ix + 2] = baseZ;
+        }
+
+        let targetX = baseX;
+        let targetY = baseY;
+        let targetZ = baseZ;
+
+        if (fishPoint && fishImpactPresence > 0.02) {
+          const dx = baseX - fishPoint.x;
+          const dy = baseY - fishPoint.y;
+          const dist = Math.max(0.001, Math.hypot(dx, dy));
+          const wake = Math.max(0, 1 - dist / (isOverviewScreen ? 7.2 : 8.8));
+          if (wake > 0) {
+            const swirl = Math.sin(time * 3.2 + i * 0.017) * 0.48;
+            const force = wake * wake * fishImpactPresence * (isOverviewScreen ? 2.2 : 2.8);
+            targetX += (dx / dist) * force + (-dy / dist) * swirl * force;
+            targetY += (dy / dist) * force + (dx / dist) * swirl * force;
+            targetZ += force * (1.4 + Math.sin(time * 2.1 + i) * 0.45);
+          }
+        }
+
+        posAttr.array[ix] += (targetX - posAttr.array[ix]) * 0.16;
+        posAttr.array[ix + 1] += (targetY - posAttr.array[ix + 1]) * 0.16;
+        posAttr.array[ix + 2] += (targetZ - posAttr.array[ix + 2]) * 0.16;
+      }
+      posAttr.needsUpdate = true;
+    }
+
     if (squareFieldRef.current) {
       const mesh = squareFieldRef.current;
       const material = mesh.material as THREE.MeshBasicMaterial;
@@ -982,10 +1053,24 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       material.opacity = Math.min(0.95, 0.34 + intensity * 0.22 + bloomPhase * 0.22);
 
       squareData.forEach((data, i) => {
+        const revealProgress = getAutoFishScreenRevealProgress(data.screen.id);
+        const screenPendingFishReveal =
+          autoFishRevealActive &&
+          revealProgress !== null &&
+          autoFishProgress < revealProgress;
+        const screenCrossedByFish =
+          fishRouteBlanket > 0.02 &&
+          revealProgress !== null &&
+          autoFishProgress < revealProgress + 0.035;
+
+        if (screenPendingFishReveal || screenCrossedByFish) {
+          squareMatrixObject.scale.setScalar(0.0001);
+          squareMatrixObject.updateMatrix();
+          mesh.setMatrixAt(i, squareMatrixObject.matrix);
+          return;
+        }
         let pulse = 0;
-        let fishScatter = 0;
-        let fishScatterX = 0;
-        let fishScatterY = 0;
+        let fishDim = 0;
 
         if (mode === 'interaction' && visibleGrowth <= 0.001 && sourceLayout) {
           const distance = Math.abs(data.screen.col - sourceLayout.col) + Math.abs(data.screen.row - sourceLayout.row);
@@ -993,14 +1078,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           pulse = Math.sin(delayed * Math.PI) * 0.9;
         }
 
-        if (fishPoint && fishImpactPresence > 0) {
+        if (fishPoint && fishImpactPresence > 0.02) {
           const dx = data.position.x - fishPoint.x;
           const dy = data.position.y - fishPoint.y;
           const dist = Math.max(0.001, Math.hypot(dx, dy));
-          const wake = Math.max(0, 1 - dist / (isOverviewScreen ? 5.7 : 6.8));
-          fishScatter = wake * wake * fishImpactPresence;
-          fishScatterX = (dx / dist) * fishScatter * (1.35 + intensity * 0.45);
-          fishScatterY = (dy / dist) * fishScatter * (1.05 + intensity * 0.35);
+          const wake = Math.max(0, 1 - dist / (isOverviewScreen ? 7 : 8));
+          fishDim = wake * fishImpactPresence * 0.6;
         }
 
         const freePower = 0.75 + intensity * 1.4 + pulse * 1.15;
@@ -1008,16 +1091,16 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         const lift = Math.cos(time * (data.speed * 0.82) + data.phase * 1.37);
         const float = Math.sin(time * (data.speed * 0.56) + data.phase * 0.71);
         squareMatrixObject.position.set(
-          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55 + fishScatterX,
-          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42 + fishScatterY,
-          data.position.z + float * data.drift.z * freePower + fishScatter * (1.8 + Math.sin(time * 2 + i) * 0.6)
+          data.position.x + sway * data.drift.x * freePower + Math.sin(time * 0.24 + i * 0.19) * data.drift.x * 0.55,
+          data.position.y + lift * data.drift.y * freePower + Math.cos(time * 0.2 + i * 0.23) * data.drift.y * 0.42,
+          data.position.z + float * data.drift.z * freePower
         );
         squareMatrixObject.rotation.set(
           0,
           0,
-          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1 + fishScatter * 2.2) + Math.cos(time * 1.2 + i) * 0.18
+          data.rotation.z + time * (0.65 + data.speed * 0.45 + pulse * 1.1) + Math.cos(time * 1.2 + i) * 0.18
         );
-        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25 + fishScatter * 1.8));
+        squareMatrixObject.scale.setScalar(data.scale * (1.08 + intensity * 0.34 + bloomPhase * 0.22 + pulse * 1.25) * (1 - fishDim));
         squareMatrixObject.updateMatrix();
         mesh.setMatrixAt(i, squareMatrixObject.matrix);
       });

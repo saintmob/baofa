@@ -140,6 +140,21 @@ const AUTO_FISH_GATHER_FRACTION = 0.2;
 const AUTO_END_BLACKOUT_MS = 3000;
 const AUTO_MUSIC_PLAYBACK_RATE = 1;
 const AUTO_FIREWORK_DURATION_MS = 20000;
+const STANDBY_WAKE_GROUPS = ['A', 'B', 'C', 'D', 'E', 'F', 'L', 'R'] as const;
+const STANDBY_WAKE_STEP_MS = 520;
+const STANDBY_WAKE_HOLD_MS = 2500;
+const STANDBY_WAKE_TOTAL_MS = STANDBY_WAKE_GROUPS.length * STANDBY_WAKE_STEP_MS + STANDBY_WAKE_HOLD_MS;
+
+function getStandbyWakeGroup(id: string) {
+  if (id === 'MASTER') return 'A';
+  const first = id[0]?.toUpperCase();
+  return STANDBY_WAKE_GROUPS.includes(first as (typeof STANDBY_WAKE_GROUPS)[number]) ? first : 'A';
+}
+
+function getStandbyWakeDelay(id: string) {
+  const group = getStandbyWakeGroup(id);
+  return STANDBY_WAKE_GROUPS.indexOf(group as (typeof STANDBY_WAKE_GROUPS)[number]) * STANDBY_WAKE_STEP_MS;
+}
 
 function getScreenLayout(id: string) {
   return id === 'A1' || id === 'MASTER'
@@ -203,6 +218,14 @@ function getFishStagePosition(progress: number) {
   };
 }
 
+function getAutoFishScreenRevealProgress(id: string) {
+  const screenId = id === 'MASTER' ? 'A1' : id;
+  const index = AUTO_FISH_PATH.indexOf(screenId);
+  if (index < 0) return null;
+  const travelLeaveProgress = index >= AUTO_FISH_PATH.length - 1 ? 1 : (index + 1) / (AUTO_FISH_PATH.length - 1);
+  return AUTO_FISH_GATHER_FRACTION + travelLeaveProgress * (1 - AUTO_FISH_GATHER_FRACTION);
+}
+
 function getFishPosition(progress: number, screenId: string, isOverview: boolean) {
   if (isOverview) {
     const stage = getFishStagePosition(progress);
@@ -237,123 +260,386 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
 }
 
 function AutoFishSchool({ active, progress, screenId, isOverview }: { active: boolean; progress: number; screenId: string; isOverview: boolean }) {
-  if (!active) return null;
   const position = getFishPosition(progress, screenId, isOverview);
-  if (!position.visible) return null;
-  const gather = 1;
-  const entryOpacity = THREE.MathUtils.smoothstep(progress, 0.015, 0.13);
-  const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
-  const fishOpacity = entryOpacity * exitOpacity;
-  const tailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * exitOpacity;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastDrawTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (!active || !position.visible) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const now = performance.now();
+    if (now - lastDrawTimeRef.current < 32) return;
+    lastDrawTimeRef.current = now;
+
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const dpr = 1;
+    const pixelWidth = Math.floor(width * dpr);
+    const pixelHeight = Math.floor(height * dpr);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const schoolWidth = width * 0.66;
+    const schoolHeight = height * 0.62;
+    const centerX = width * position.x / 100;
+    const centerY = height * position.y / 100;
+    const schoolScale = isOverview ? 1.52 : 1.84;
+    const entryOpacity = THREE.MathUtils.smoothstep(progress, 0.015, 0.13);
+    const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
+    const fishOpacity = entryOpacity * exitOpacity;
+    const tailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * exitOpacity;
+    const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
+    const contraction = 1 - THREE.MathUtils.smoothstep(Math.sin(progress * Math.PI * 4) * 0.5 + 0.5, 0.56, 1) * 0.18;
+    const scaleX = schoolWidth / 900;
+    const scaleY = schoolHeight / 600;
+    const angle = position.angle * Math.PI / 180;
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.rotate(angle);
+    ctx.globalAlpha = fishOpacity;
+    ctx.shadowColor = 'rgba(34,211,238,0.32)';
+    ctx.shadowBlur = 28;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (let index = 0; index < 72; index += 1) {
+      const phase = progress * 46 + index * 0.77;
+      const spiral = index * 0.38 + progress * Math.PI * 7;
+      const radius = (80 + (index % 38) * 9 + Math.sin(phase) * 24) * contraction;
+      const x = (Math.cos(spiral) * radius - progress * 460 + (index % 9) * 44) * scaleX * 0.92;
+      const y = (Math.sin(spiral * 0.72) * radius * 0.46 + Math.cos(phase * 0.4) * 54) * scaleY * vortexBreath;
+      const glow = THREE.MathUtils.clamp(0.24 + Math.sin(phase * 1.3) * 0.2, 0.08, 0.48);
+      ctx.globalAlpha = tailOpacity * glow;
+      ctx.fillStyle = 'rgba(207,250,254,0.72)';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(0.7, (0.9 + (index % 4) * 0.42) * Math.min(scaleX, scaleY)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.shadowColor = 'rgba(125,249,255,0.5)';
+
+    const batches = [
+      { delay: 0, fishStart: 0, fishCount: 32, particleStart: 0, particleCount: 64, laneOffset: -0.16, scale: 1.02 },
+      { delay: 0.032, fishStart: 32, fishCount: 28, particleStart: 64, particleCount: 58, laneOffset: 0.14, scale: 0.96 },
+      { delay: 0.064, fishStart: 60, fishCount: 24, particleStart: 122, particleCount: 58, laneOffset: 0.36, scale: 0.9 },
+    ];
+
+    batches.forEach((batch, batchIndex) => {
+      const batchProgress = THREE.MathUtils.clamp((progress - batch.delay) / (1 - batch.delay), 0, 1);
+      const batchPresence = THREE.MathUtils.smoothstep(progress, batch.delay, batch.delay + 0.038) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
+      if (batchPresence <= 0.001) return;
+
+      for (let p = 0; p < batch.particleCount; p += 1) {
+        const index = batch.particleStart + p;
+        const lane = index % 32;
+        const band = Math.floor(index / 32);
+        const flow = (batchProgress * 520 + index * 13.7) % 280;
+        const curlX = Math.sin(batchProgress * 21 + lane * 0.72 + band * 1.9) * 38 + Math.cos(batchProgress * 15 + index * 0.31) * 22;
+        const curlY = Math.cos(batchProgress * 19 + lane * 0.64 + band * 1.5) * 34 + Math.sin(batchProgress * 17 + index * 0.27) * 18;
+        const vortex = Math.sin(batchProgress * Math.PI * 5 + index * 0.12) * 0.5 + 0.5;
+        const x = (-flow - band * 42 + Math.sin(index * 1.43 + batchProgress * 22) * 32 + curlX * vortex + batch.laneOffset * 120) * schoolScale * contraction * scaleX;
+        const y = (Math.sin(lane * 0.73 + band * 1.2 + batchProgress * 18) * (62 + band * 20) + Math.cos(index * 0.41) * 20 + curlY * vortex + batch.laneOffset * 72) * schoolScale * vortexBreath * scaleY;
+        const size = (1.25 + (index % 5) * 0.5) * Math.min(scaleX, scaleY);
+        const sparkle = THREE.MathUtils.clamp(0.42 + Math.sin(batchProgress * 55 + index * 0.91) * 0.28, 0.08, 0.76);
+
+        ctx.globalAlpha = tailOpacity * sparkle * batchPresence;
+        ctx.fillStyle = index % 7 === 0 ? 'rgba(236,254,255,0.9)' : 'rgba(103,232,249,0.72)';
+        ctx.shadowBlur = index % 7 === 0 ? 18 : 10;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.8, size), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (let local = 0; local < batch.fishCount; local += 1) {
+        const index = batch.fishStart + local;
+        const ring = Math.floor(local / 16) + batchIndex;
+        const lane = local % 24;
+        const drift = Math.sin(batchProgress * 8.5 + ring * 1.7) * 30 + Math.cos(batchProgress * 5.2 + index * 0.47) * 15;
+        const scatterX = Math.sin(index * 2.37) * 18 + Math.cos(index * 0.83) * 12;
+        const scatterY = Math.cos(index * 1.91) * 16 + Math.sin(index * 0.61) * 10;
+        const theta = lane * 0.56 + ring * 1.27 + batchProgress * 9;
+        const curlX = Math.sin(theta + Math.sin(batchProgress * 6 + index) * 0.9) * (42 + ring * 6) + Math.cos(batchProgress * 20 + index * 0.33) * 18;
+        const curlY = Math.cos(theta * 0.92 + batchProgress * 4.7) * (36 + ring * 8) + Math.sin(batchProgress * 18 + index * 0.41) * 16;
+        const avoidX = (Math.sin(index * 12.989 + batchProgress * 7.2) + Math.sin(index * 4.73 + batchProgress * 13)) * (13 + ring * 2);
+        const avoidY = (Math.cos(index * 9.233 + batchProgress * 6.4) + Math.sin(index * 6.11 + batchProgress * 9.6)) * (11 + ring * 2);
+        const dart = Math.sin(batchProgress * 36 + index * 1.19) * 20 + Math.cos(batchProgress * 28 + lane * 0.7) * 14;
+        const schoolX = (-ring * 56 + Math.cos(lane * 0.64 + ring * 1.31) * (112 - ring * 2) + Math.sin(batchProgress * 16 + index * 0.77) * 42 + drift + scatterX + dart + curlX + avoidX + batch.laneOffset * 150) * schoolScale * contraction * batch.scale;
+        const schoolY = (Math.sin(lane * 0.76 + ring * 0.69) * (82 + ring * 24) + Math.sin(batchProgress * 18 + index) * 38 + scatterY + Math.cos(batchProgress * 31 + index * 0.53) * 16 + curlY + avoidY + batch.laneOffset * 80) * schoolScale * vortexBreath * batch.scale;
+        const x = schoolX * scaleX;
+        const y = schoolY * scaleY;
+        const shimmer = THREE.MathUtils.clamp(0.62 + Math.sin(batchProgress * 46 + index * 1.41) * 0.24 + (index % 5) * 0.04, 0.28, 1);
+        const fishLength = (36 + (index % 6) * 5.4) * Math.min(scaleX, scaleY) * batch.scale;
+        const fishHeight = (9.6 + (index % 5) * 1.42) * Math.min(scaleX, scaleY) * batch.scale;
+        const tailLength = (26 + (index % 7) * 4.8) * Math.min(scaleX, scaleY) * batch.scale;
+        const swimPhase = batchProgress * 132 + index * 0.93;
+        const speedSync = 0.84 + Math.sin(batchProgress * Math.PI * 5 + ring) * 0.16;
+        const tailWag = Math.sin(swimPhase * speedSync) * (42 + (index % 4) * 6.8);
+        const bodyWave = Math.sin(swimPhase * 0.88) * 11.5;
+        const fishAngle = (Math.sin(batchProgress * 18 + index * 0.91) * 18 + (index % 3 - 1) * 8 + bodyWave + curlY * 0.055) * Math.PI / 180;
+        const finWave = Math.sin(swimPhase * 1.16 + index) * 10 * Math.PI / 180;
+        const bodyY = Math.sin(swimPhase * 0.62) * 2.8 * Math.min(scaleX, scaleY);
+
+      ctx.save();
+      ctx.translate(x, y + bodyY);
+      ctx.rotate(fishAngle);
+      ctx.globalAlpha = fishOpacity * shimmer * batchPresence;
+
+      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.24, 0.06, 0.22) * batchPresence;
+      ctx.shadowBlur = 18;
+      const bodyGlow = ctx.createRadialGradient(-fishLength * 0.04, 0, fishHeight * 0.22, -fishLength * 0.04, 0, fishLength * 0.98);
+      bodyGlow.addColorStop(0, 'rgba(236,254,255,0.22)');
+      bodyGlow.addColorStop(0.34, 'rgba(125,249,255,0.14)');
+      bodyGlow.addColorStop(0.72, 'rgba(34,211,238,0.045)');
+      bodyGlow.addColorStop(1, 'rgba(14,165,233,0)');
+      ctx.fillStyle = bodyGlow;
+      ctx.beginPath();
+      ctx.ellipse(-fishLength * 0.12, 0, fishLength * 1.35, fishHeight * 2.1, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const tailAngle = tailWag * Math.PI / 180;
+      ctx.save();
+      ctx.translate(-fishLength * 0.48, Math.sin(swimPhase) * fishHeight * 0.3);
+      ctx.rotate(tailAngle * 1.12);
+      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.72, 0.2, 0.72) * batchPresence;
+      ctx.shadowBlur = 9;
+      ctx.fillStyle = 'rgba(125,249,255,0.52)';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-fishHeight * 1.45, -fishHeight * 0.95);
+      ctx.lineTo(-fishHeight * 1.18, 0);
+      ctx.lineTo(-fishHeight * 1.45, fishHeight * 0.95);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.globalAlpha = tailOpacity * fishOpacity * 0.11 * batchPresence;
+      const plume = ctx.createRadialGradient(-fishLength * 0.72, 0, 0, -fishLength * 0.72, 0, tailLength * 1.25);
+      plume.addColorStop(0, 'rgba(125,249,255,0.34)');
+      plume.addColorStop(0.45, 'rgba(34,211,238,0.16)');
+      plume.addColorStop(1, 'rgba(8,145,178,0)');
+      ctx.fillStyle = plume;
+      ctx.beginPath();
+      ctx.ellipse(-fishLength * 0.9, 0, tailLength * 1.15, fishHeight * 1.1, tailAngle * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let speck = 0; speck < 1; speck += 1) {
+        const speckPhase = swimPhase + speck * 2.11;
+        ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * (0.26 + speck * 0.06), 0.08, 0.36) * batchPresence;
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = speck % 2 === 0 ? 'rgba(236,254,255,0.82)' : 'rgba(125,249,255,0.62)';
+        ctx.beginPath();
+        ctx.arc(
+          -fishLength * 0.08 + Math.sin(speckPhase) * fishLength * 0.22,
+          Math.cos(speckPhase * 0.82) * fishHeight * 0.58,
+          Math.max(0.8, fishHeight * (0.07 + speck * 0.018)),
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = fishOpacity * shimmer * batchPresence;
+      ctx.shadowBlur = 7;
+      const bodyGradient = ctx.createLinearGradient(-fishLength * 0.45, 0, fishLength * 0.5, 0);
+      bodyGradient.addColorStop(0, 'rgba(103,232,249,0.05)');
+      bodyGradient.addColorStop(0.25, 'rgba(125,249,255,0.42)');
+      bodyGradient.addColorStop(0.62, 'rgba(240,253,250,0.9)');
+      bodyGradient.addColorStop(0.84, 'rgba(255,255,255,0.98)');
+      bodyGradient.addColorStop(1, 'rgba(125,249,255,0.13)');
+      ctx.fillStyle = bodyGradient;
+      ctx.beginPath();
+      ctx.moveTo(-fishLength * 0.5, 0);
+      ctx.bezierCurveTo(-fishLength * 0.38, -fishHeight * 0.95, fishLength * 0.22, -fishHeight * 0.78, fishLength * 0.52, 0);
+      ctx.bezierCurveTo(fishLength * 0.2, fishHeight * 0.85, -fishLength * 0.38, fishHeight * 0.95, -fishLength * 0.5, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.48, 0.16, 0.5) * batchPresence;
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = 'rgba(125,249,255,0.46)';
+      ctx.save();
+      ctx.translate(fishLength * 0.02, fishHeight * 0.48);
+      ctx.rotate(0.5 + finWave);
+      ctx.beginPath();
+      ctx.moveTo(0, -fishHeight * 0.15);
+      ctx.lineTo(fishLength * 0.34, 0);
+      ctx.lineTo(0, fishHeight * 0.58);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.86, 0.28, 0.86) * batchPresence;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(-fishLength * 0.02 + Math.sin(index) * 4, Math.cos(index * 1.7) * fishHeight * 0.24, Math.max(1.4, fishHeight * 0.16), 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.9, 0.36, 0.95) * batchPresence;
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = 'rgba(4,47,46,0.92)';
+      ctx.beginPath();
+      ctx.arc(fishLength * 0.34, -fishHeight * 0.16, Math.max(1.6, fishHeight * 0.14), 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+      }
+    });
+
+    const bloomGradient = ctx.createRadialGradient(0, 0, 20, 0, 0, Math.max(schoolWidth, schoolHeight) * 0.58);
+    bloomGradient.addColorStop(0, 'rgba(125,249,255,0.1)');
+    bloomGradient.addColorStop(0.45, 'rgba(34,211,238,0.045)');
+    bloomGradient.addColorStop(1, 'rgba(14,165,233,0)');
+    ctx.globalAlpha = fishOpacity * 0.9;
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = bloomGradient;
+    ctx.fillRect(-schoolWidth * 0.7, -schoolHeight * 0.7, schoolWidth * 1.4, schoolHeight * 1.4);
+
+    ctx.restore();
+  }, [active, isOverview, position.angle, position.visible, position.x, position.y, progress]);
+
+  if (!active || !position.visible) return null;
 
   return (
     <div className="fixed inset-0 z-30 pointer-events-none overflow-hidden" data-auto-fish-school>
-      <div
-        className="absolute h-[28rem] w-[44rem] transition-opacity duration-700"
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full transition-opacity duration-700"
         data-auto-fish-body
         style={{
-          left: `${position.x}%`,
-          top: `${position.y}%`,
-          opacity: fishOpacity,
-          transform: `translate(-50%, -50%) rotate(${position.angle}deg)`,
-          filter: 'drop-shadow(0 0 24px rgba(240,253,250,0.58)) drop-shadow(0 0 46px rgba(34,211,238,0.42)) drop-shadow(0 0 72px rgba(14,165,233,0.22))',
+          opacity: THREE.MathUtils.smoothstep(progress, 0.015, 0.13) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1)),
         }}
-      >
-        {Array.from({ length: 128 }).map((_, index) => {
-          const lane = index % 32;
-          const band = Math.floor(index / 32);
-          const flow = (progress * 520 + index * 13.7) % 280;
-          const x = -flow - band * 52 + Math.sin(index * 1.43 + progress * 18) * 28;
-          const y = Math.sin(lane * 0.73 + band * 1.2 + progress * 14) * (54 + band * 18) + Math.cos(index * 0.41) * 18;
-          const size = 1.4 + (index % 5) * 0.55;
-          const sparkle = 0.42 + Math.sin(progress * 55 + index * 0.91) * 0.28;
+      />
+    </div>
+  );
+}
 
-          return (
-            <span
-              key={`auto-fish-particle-${index}`}
-              className="absolute rounded-full"
-              style={{
-                width: size,
-                height: size,
-                left: `calc(50% + ${x}px)`,
-                top: `calc(50% + ${y}px)`,
-                opacity: tailOpacity * THREE.MathUtils.clamp(sparkle, 0.08, 0.76),
-                background: index % 7 === 0 ? 'rgba(236,254,255,0.88)' : 'rgba(103,232,249,0.72)',
-                boxShadow: '0 0 8px rgba(125,249,255,0.72), 0 0 18px rgba(34,211,238,0.38)',
-                filter: 'blur(0.25px)',
-              }}
-            />
-          );
-        })}
-        {Array.from({ length: 76 }).map((_, index) => {
-          const ring = Math.floor(index / 19);
-          const lane = index % 19;
-          const drift = Math.sin(progress * 8.5 + ring * 1.7) * 26 + Math.cos(progress * 5.2 + index * 0.47) * 12;
-          const scatterX = Math.sin(index * 2.37) * 18 + Math.cos(index * 0.83) * 12;
-          const scatterY = Math.cos(index * 1.91) * 16 + Math.sin(index * 0.61) * 10;
-          const schoolX = -ring * 48 + Math.cos(lane * 0.68 + ring * 1.31) * (84 - ring * 5) + Math.sin(progress * 12 + index * 0.77) * 22 + drift + scatterX;
-          const schoolY = Math.sin(lane * 0.79 + ring * 0.69) * (56 + ring * 14) + Math.sin(progress * 10 + index) * 20 + scatterY;
-          const particleX = Math.sin(index * 12.7) * 260 + Math.cos(index * 3.1) * 68;
-          const particleY = Math.cos(index * 9.3) * 170 + Math.sin(index * 5.4) * 45;
-          const x = THREE.MathUtils.lerp(particleX, schoolX, gather);
-          const y = THREE.MathUtils.lerp(particleY, schoolY, gather);
-          const shimmer = 0.62 + Math.sin(progress * 46 + index * 1.41) * 0.24 + (index % 5) * 0.04;
-          const fishLength = 28 + (index % 6) * 4.5;
-          const fishHeight = 7.5 + (index % 5) * 1.2;
-          const tailLength = 20 + (index % 7) * 4;
-          const tailOffset = 20 + (index % 5) * 5;
-          const fishAngle = Math.sin(progress * 11 + index * 0.91) * 10 + (index % 3 - 1) * 4;
+function AutoStandbyWakeOverlay({
+  active,
+  wakeKey,
+  screenId,
+  isOverview,
+  isMaster,
+}: {
+  active: boolean;
+  wakeKey: number;
+  screenId: string;
+  isOverview: boolean;
+  isMaster: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-          return (
-            <div key={`auto-fish-${index}`}>
-              <span
-                className="absolute rounded-full"
-                style={{
-                  width: tailLength,
-                  height: Math.max(1, fishHeight * 0.22),
-                  left: `calc(50% + ${x - tailOffset}px)`,
-                  top: `calc(50% + ${y + Math.sin(index) * 2}px)`,
-                  opacity: tailOpacity * fishOpacity * 0.22,
-                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
-                  background: 'linear-gradient(90deg, rgba(8,145,178,0), rgba(34,211,238,0.18), rgba(125,249,255,0.48), rgba(240,253,250,0.08))',
-                  boxShadow: '0 0 14px rgba(34,211,238,0.42), 0 0 30px rgba(14,165,233,0.24)',
-                  filter: 'blur(2.6px)',
-                }}
-              />
-              <span
-                className="absolute rounded-full"
-                style={{
-                  width: tailLength * 1.65,
-                  height: Math.max(2, fishHeight * 0.52),
-                  left: `calc(50% + ${x - tailOffset - tailLength * 0.36}px)`,
-                  top: `calc(50% + ${y + Math.sin(index) * 2}px)`,
-                  opacity: tailOpacity * fishOpacity * 0.12,
-                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
-                  background: 'radial-gradient(ellipse at 70% 50%, rgba(125,249,255,0.46) 0%, rgba(34,211,238,0.22) 42%, rgba(8,145,178,0) 100%)',
-                  filter: 'blur(5px)',
-                }}
-              />
-              <span
-                className="absolute"
-                style={{
-                  width: fishLength,
-                  height: fishHeight,
-                  left: `calc(50% + ${x}px)`,
-                  top: `calc(50% + ${y}px)`,
-                  opacity: fishOpacity * THREE.MathUtils.clamp(shimmer, 0.28, 1),
-                  transform: `translate(-50%, -50%) rotate(${fishAngle}deg)`,
-                  borderRadius: '70% 46% 46% 70% / 58% 48% 52% 42%',
-                  background: 'radial-gradient(ellipse at 26% 50%, rgba(255,255,255,0.98) 0%, rgba(235,254,255,0.86) 32%, rgba(151,245,255,0.36) 64%, rgba(151,245,255,0) 100%), linear-gradient(90deg, rgba(103,232,249,0.02) 0%, rgba(224,252,255,0.7) 28%, rgba(255,255,255,0.9) 62%, rgba(125,249,255,0.16) 100%)',
-                  boxShadow: '0 0 9px rgba(255,255,255,0.62), 0 0 18px rgba(125,249,255,0.34)',
-                  filter: 'blur(0.22px)',
-                  WebkitMaskImage: 'linear-gradient(90deg, rgba(0,0,0,0.78) 0%, #000 18%, #000 78%, rgba(0,0,0,0.12) 100%)',
-                  maskImage: 'linear-gradient(90deg, rgba(0,0,0,0.78) 0%, #000 18%, #000 78%, rgba(0,0,0,0.12) 100%)',
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
+  useEffect(() => {
+    if (!active) return;
+    const startedAt = performance.now();
+    let frameId = 0;
+
+    const render = (now: number) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.35);
+      const pixelWidth = Math.floor(width * dpr);
+      const pixelHeight = Math.floor(height * dpr);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.globalCompositeOperation = 'lighter';
+
+      const elapsed = now - startedAt;
+      const drawScreenGlow = (screen: ScreenLayoutItem, alphaScale = 1) => {
+        const delay = getStandbyWakeDelay(screen.id);
+        const local = THREE.MathUtils.clamp((elapsed - delay) / 2600, 0, 1);
+        if (local <= 0 || local >= 1) return;
+
+        const widthRatio = screen.width ?? 0.78;
+        const heightRatio = screen.height ?? 0.52;
+        const x = (screen.col / STAGE_BOUNDS.width) * width;
+        const y = (screen.row / STAGE_BOUNDS.height) * height;
+        const w = (widthRatio / STAGE_BOUNDS.width) * width;
+        const h = (heightRatio / STAGE_BOUNDS.height) * height;
+        const peak = local < 0.22 ? local / 0.22 : 1 - (local - 0.22) / 0.78;
+        const sustain = 0.18 + Math.sin(local * Math.PI) * 0.72;
+        const alpha = THREE.MathUtils.clamp(Math.max(peak, sustain * 0.55) * alphaScale, 0, 0.95);
+        const rotate = (screen.rotate ?? 0) * Math.PI / 180;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rotate);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = 'rgba(34,211,238,0.12)';
+        ctx.strokeStyle = 'rgba(236,254,255,0.46)';
+        ctx.lineWidth = 1;
+        ctx.fillRect(-w / 2, -h / 2, w, h);
+        ctx.strokeRect(-w / 2, -h / 2, w, h);
+
+        const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(w, h) * 1.15);
+        glow.addColorStop(0, 'rgba(236,254,255,0.58)');
+        glow.addColorStop(0.45, 'rgba(34,211,238,0.2)');
+        glow.addColorStop(1, 'rgba(14,165,233,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(-w * 1.4, -h * 1.8, w * 2.8, h * 3.6);
+        ctx.restore();
+      };
+
+      if (isOverview) {
+        SHOW_SCREEN_LAYOUT_ITEMS.forEach((screen) => drawScreenGlow(screen));
+        const veilAlpha = Math.max(0, 1 - elapsed / STANDBY_WAKE_TOTAL_MS) * 0.16;
+        if (veilAlpha > 0.001) {
+          const veil = ctx.createRadialGradient(width * 0.5, height * 0.5, 0, width * 0.5, height * 0.5, Math.max(width, height) * 0.56);
+          veil.addColorStop(0, `rgba(125,249,255,${veilAlpha})`);
+          veil.addColorStop(1, 'rgba(14,165,233,0)');
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = veil;
+          ctx.fillRect(0, 0, width, height);
+        }
+      } else {
+        const screen = isMaster ? MASTER_SCREEN : getScreenLayout(screenId);
+        drawScreenGlow(screen, 1.15);
+      }
+
+      if (elapsed < STANDBY_WAKE_TOTAL_MS + 600) {
+        frameId = requestAnimationFrame(render);
+      }
+    };
+
+    frameId = requestAnimationFrame(render);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [active, isMaster, isOverview, screenId, wakeKey]);
+
+  if (!active) return null;
+
+  return (
+    <div
+      key={wakeKey}
+      className="pointer-events-none fixed inset-0 z-[11] overflow-hidden"
+    >
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
   );
 }
@@ -445,6 +731,8 @@ export default function App() {
   const [fireworkState, setFireworkState] = useState<'standby' | 'launching' | 'resetting'>('standby');
   const [autoSceneOpacity, setAutoSceneOpacity] = useState(1);
   const [autoBlackout, setAutoBlackout] = useState(false);
+  const [standbyWakeActive, setStandbyWakeActive] = useState(false);
+  const [standbyWakeKey, setStandbyWakeKey] = useState(0);
   const [autoFishActive, setAutoFishActive] = useState(false);
   const [autoFishProgress, setAutoFishProgress] = useState(0);
   const [showScreenPanel, setShowScreenPanel] = useState(() => isLocalPreview);
@@ -493,6 +781,7 @@ export default function App() {
   const autoFireworkActiveRef = useRef(false);
   const audioAutoStartAllowedRef = useRef(true);
   const autoFishStartedAtRef = useRef<number | null>(null);
+  const standbyWakeTimerRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
@@ -662,6 +951,24 @@ export default function App() {
     autoFishStartedAtRef.current = null;
     setAutoFishActive(false);
     setAutoFishProgress(0);
+  }, []);
+
+  const stopStandbyWake = useCallback(() => {
+    if (standbyWakeTimerRef.current) {
+      window.clearTimeout(standbyWakeTimerRef.current);
+      standbyWakeTimerRef.current = null;
+    }
+    setStandbyWakeActive(false);
+  }, []);
+
+  const startStandbyWake = useCallback(() => {
+    if (standbyWakeTimerRef.current) window.clearTimeout(standbyWakeTimerRef.current);
+    setStandbyWakeKey((value) => value + 1);
+    setStandbyWakeActive(true);
+    standbyWakeTimerRef.current = window.setTimeout(() => {
+      standbyWakeTimerRef.current = null;
+      setStandbyWakeActive(false);
+    }, STANDBY_WAKE_TOTAL_MS + 900);
   }, []);
 
   const scheduleStandbyPrompt = useCallback((delayMs = STANDBY_PROMPT_DELAY_MS, armGestureInput = true) => {
@@ -877,6 +1184,7 @@ export default function App() {
       if (gestureStartTimeoutRef.current) window.clearTimeout(gestureStartTimeoutRef.current);
       if (standbyPromptTimeoutRef.current) window.clearTimeout(standbyPromptTimeoutRef.current);
       if (fireworkScratchTimeoutRef.current) window.clearTimeout(fireworkScratchTimeoutRef.current);
+      if (standbyWakeTimerRef.current) window.clearTimeout(standbyWakeTimerRef.current);
       clearAutoTimeline();
     };
   }, [clearAutoTimeline, setVisualMode]);
@@ -953,6 +1261,7 @@ export default function App() {
   const resetTreeGrowth = (allowAudioStart = true) => {
     const shouldRestartAuto = treeControlMode === 'auto';
     clearAutoTimeline();
+    stopStandbyWake();
     if (!shouldRestartAuto) {
       setTreeControlMode('manual');
       setAutoBlackout(false);
@@ -1199,6 +1508,7 @@ export default function App() {
   const startAutoFireworkShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
     audioAutoStartAllowedRef.current = allowAudioStart;
+    stopStandbyWake();
     setVisualMode('firework');
     setFireworkControlMode('auto');
     setFireworkState('launching');
@@ -1260,7 +1570,7 @@ export default function App() {
 
     randomPlan.forEach(({ t, screen, kind, point }) => {
       const timer = window.setTimeout(() => {
-        void triggerFireworkAt(point, kind, screen, kind === 'large' || kind === 'giant' ? 920 : 620, allowAudioStart);
+        void triggerFireworkAt(point, kind, screen, kind === 'large' ? 920 : 620, allowAudioStart);
       }, AUTO_REVEAL_MS + t);
       autoTimelineTimersRef.current.push(timer);
     });
@@ -1288,7 +1598,7 @@ export default function App() {
       autoTimelineTimersRef.current.push(blackoutTimer);
     }, AUTO_REVEAL_MS + AUTO_FIREWORK_DURATION_MS);
     autoTimelineTimersRef.current.push(endTimer);
-  }, [clearAutoTimeline, screenId, setFireworkState, setMusicEvolution, setVisualMode, soundEnabled, startAudio, stopAllLayers, syncToFirebase, triggerFireworkAt]);
+  }, [clearAutoTimeline, screenId, setFireworkState, setMusicEvolution, setVisualMode, soundEnabled, startAudio, stopAllLayers, stopStandbyWake, syncToFirebase, triggerFireworkAt]);
 
   const startAutoTreeShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
@@ -1403,20 +1713,22 @@ export default function App() {
 
   const setManualTreeControl = useCallback(() => {
     clearAutoTimeline();
+    stopStandbyWake();
     setTreeControlMode('manual');
     setAutoBlackout(false);
     setAutoSceneOpacity(1);
-  }, [clearAutoTimeline, setVisualMode]);
+  }, [clearAutoTimeline, stopStandbyWake]);
 
   const setManualFireworkControl = useCallback(() => {
     clearAutoTimeline();
+    stopStandbyWake();
     setFireworkControlMode('manual');
     setVisualMode('firework');
     setFireworkState('standby');
     setAutoBlackout(false);
     setAutoSceneOpacity(1);
     autoFireworkActiveRef.current = false;
-  }, [clearAutoTimeline]);
+  }, [clearAutoTimeline, stopStandbyWake]);
 
   const handleSplashPointerDown = async (e: React.PointerEvent) => {
     const target = e.currentTarget as HTMLElement;
@@ -1747,6 +2059,12 @@ export default function App() {
       : fireworkState === 'resetting'
         ? 'RESETTING / 重置'
         : 'STANDBY / 待机';
+  const treeAutoActive = visualMode === 'tree' && treeControlMode === 'auto';
+  const isAutoScreenFrameVisible = (id: string) => {
+    if (!treeAutoActive) return true;
+    const revealProgress = getAutoFishScreenRevealProgress(id);
+    return revealProgress === null || autoFishProgress >= revealProgress;
+  };
 
   if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
     const targetUrl = screenRoute.url;
@@ -1820,6 +2138,7 @@ export default function App() {
               pulseTime={screenPulse?.timestamp}
               autoFishStage={autoFishStage}
               autoFishProgress={autoFishProgress}
+              autoFishRevealActive={treeAutoActive}
               isStarted={treeGrowth > 0 || mode === 'interaction'}
               isPaused={false}
             />
@@ -1841,25 +2160,37 @@ export default function App() {
             className="relative w-[min(94vw,118vh)] border border-cyan-300/20 bg-black/10"
             style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
           >
-            <div
-              className="absolute rounded-sm border border-emerald-300/35 bg-emerald-300/[0.035] text-[9px] font-mono tracking-widest text-emerald-100/80"
-              style={getLayoutStyle(MASTER_SCREEN)}
-            >
-              <span className="absolute left-2 top-2">{getScreenDisplayId(MASTER_SCREEN.id)}</span>
-              <span className="absolute bottom-2 right-2">大屏幕</span>
-            </div>
-            {SCREEN_LAYOUT_ITEMS.map((screen) => (
+            {isAutoScreenFrameVisible(MASTER_SCREEN.id) && (
               <div
-                key={`overview-${screen.id}`}
-                className="absolute rounded-sm border border-cyan-300/20 bg-cyan-300/[0.025]"
-                style={getLayoutStyle(screen)}
+                className="absolute rounded-sm border border-emerald-300/35 bg-emerald-300/[0.035] text-[9px] font-mono tracking-widest text-emerald-100/80"
+                style={getLayoutStyle(MASTER_SCREEN)}
               >
-                <span className="absolute left-1.5 top-1 text-[9px] font-mono tracking-widest text-cyan-100/65">{getScreenDisplayId(screen.id)}</span>
+                <span className="absolute left-2 top-2">{getScreenDisplayId(MASTER_SCREEN.id)}</span>
+                <span className="absolute bottom-2 right-2">大屏幕</span>
               </div>
+            )}
+            {SCREEN_LAYOUT_ITEMS.map((screen) => (
+              isAutoScreenFrameVisible(screen.id) ? (
+                <div
+                  key={`overview-${screen.id}`}
+                  className="absolute rounded-sm border border-cyan-300/20 bg-cyan-300/[0.025]"
+                  style={getLayoutStyle(screen)}
+                >
+                  <span className="absolute left-1.5 top-1 text-[9px] font-mono tracking-widest text-cyan-100/65">{getScreenDisplayId(screen.id)}</span>
+                </div>
+              ) : null
             ))}
           </div>
         </div>
       )}
+
+      <AutoStandbyWakeOverlay
+        active={standbyWakeActive && visualMode === 'tree'}
+        wakeKey={standbyWakeKey}
+        screenId={screenId}
+        isOverview={isOverview}
+        isMaster={isMaster}
+      />
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
         <AnimatePresence>
@@ -2112,7 +2443,6 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
-                          clearSequence();
                           resetTreeGrowth();
                         }}
                       >
