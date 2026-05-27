@@ -270,48 +270,88 @@ const AUTO_FISH_TRAIL_COUNT = 108;
 
 function createFishTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 96;
-  canvas.height = 32;
+  canvas.width = 128;
+  canvas.height = 48;
   const ctx = canvas.getContext('2d');
   if (!ctx) return new THREE.CanvasTexture(canvas);
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.translate(48, 16);
+  ctx.translate(64, 24);
   ctx.globalCompositeOperation = 'source-over';
 
-  const glow = ctx.createRadialGradient(8, 0, 2, 8, 0, 34);
-  glow.addColorStop(0, 'rgba(236,254,255,0.9)');
-  glow.addColorStop(0.42, 'rgba(125,249,255,0.36)');
-  glow.addColorStop(1, 'rgba(34,211,238,0)');
-  ctx.fillStyle = glow;
+  const aura = ctx.createRadialGradient(18, 0, 1, 18, 0, 48);
+  aura.addColorStop(0, 'rgba(236,254,255,0.82)');
+  aura.addColorStop(0.2, 'rgba(125,249,255,0.38)');
+  aura.addColorStop(0.56, 'rgba(34,211,238,0.12)');
+  aura.addColorStop(1, 'rgba(34,211,238,0)');
+  ctx.fillStyle = aura;
   ctx.beginPath();
-  ctx.ellipse(6, 0, 42, 14, 0, 0, Math.PI * 2);
+  ctx.ellipse(12, 0, 50, 18, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = 'rgba(125,249,255,0.72)';
+  const tailGlow = ctx.createRadialGradient(-30, 0, 2, -30, 0, 30);
+  tailGlow.addColorStop(0, 'rgba(34,211,238,0.72)');
+  tailGlow.addColorStop(0.45, 'rgba(6,182,212,0.32)');
+  tailGlow.addColorStop(1, 'rgba(8,145,178,0)');
+  ctx.fillStyle = tailGlow;
   ctx.beginPath();
-  ctx.moveTo(-24, 0);
-  ctx.lineTo(-42, -10);
-  ctx.lineTo(-36, 0);
-  ctx.lineTo(-42, 10);
+  ctx.ellipse(-28, 0, 34, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tail = ctx.createLinearGradient(-52, 0, -18, 0);
+  tail.addColorStop(0, 'rgba(14,165,233,0.82)');
+  tail.addColorStop(0.45, 'rgba(34,211,238,1)');
+  tail.addColorStop(1, 'rgba(125,249,255,0.88)');
+  ctx.fillStyle = tail;
+  ctx.beginPath();
+  ctx.moveTo(-28, 0);
+  ctx.lineTo(-54, -13);
+  ctx.lineTo(-46, 0);
+  ctx.lineTo(-54, 13);
   ctx.closePath();
   ctx.fill();
 
-  const body = ctx.createLinearGradient(-24, 0, 34, 0);
-  body.addColorStop(0, 'rgba(103,232,249,0.28)');
-  body.addColorStop(0.48, 'rgba(207,250,254,0.92)');
-  body.addColorStop(1, 'rgba(255,255,255,0.98)');
+  const body = ctx.createLinearGradient(-30, 0, 42, 0);
+  body.addColorStop(0, 'rgba(6,182,212,0.36)');
+  body.addColorStop(0.25, 'rgba(125,249,255,0.72)');
+  body.addColorStop(0.58, 'rgba(207,250,254,0.94)');
+  body.addColorStop(0.84, 'rgba(255,255,255,1)');
+  body.addColorStop(1, 'rgba(125,249,255,0.48)');
   ctx.fillStyle = body;
   ctx.beginPath();
-  ctx.moveTo(-26, 0);
-  ctx.bezierCurveTo(-14, -11, 20, -10, 36, 0);
-  ctx.bezierCurveTo(18, 11, -14, 11, -26, 0);
+  ctx.moveTo(-32, 0);
+  ctx.bezierCurveTo(-18, -12, 25, -12, 44, 0);
+  ctx.bezierCurveTo(24, 12, -18, 12, -32, 0);
   ctx.closePath();
+  ctx.fill();
+
+  const headLight = ctx.createRadialGradient(31, -2, 1, 31, -2, 19);
+  headLight.addColorStop(0, 'rgba(255,255,255,1)');
+  headLight.addColorStop(0.2, 'rgba(236,254,255,1)');
+  headLight.addColorStop(0.54, 'rgba(125,249,255,0.58)');
+  headLight.addColorStop(1, 'rgba(125,249,255,0)');
+  ctx.fillStyle = headLight;
+  ctx.beginPath();
+  ctx.ellipse(28, -1, 22, 10, -0.05, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath();
+  ctx.ellipse(35, -2, 7, 3.2, -0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  const dorsal = ctx.createLinearGradient(-18, -8, 18, 8);
+  dorsal.addColorStop(0, 'rgba(8,47,73,0)');
+  dorsal.addColorStop(0.45, 'rgba(8,47,73,0.26)');
+  dorsal.addColorStop(1, 'rgba(8,47,73,0)');
+  ctx.fillStyle = dorsal;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 28, 5, -0.18, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = 'rgba(4,47,46,0.9)';
   ctx.beginPath();
-  ctx.arc(25, -3, 2.4, 0, Math.PI * 2);
+  ctx.arc(32, -3, 2.3, 0, Math.PI * 2);
   ctx.fill();
 
   const texture = new THREE.CanvasTexture(canvas);
