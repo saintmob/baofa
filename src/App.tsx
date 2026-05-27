@@ -246,9 +246,15 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
   const isGathering = progress < AUTO_FISH_GATHER_FRACTION;
   const margin = isGathering || progress > 0.88 ? 170 : 34;
 
+  const a1EntryFocus = !isOverview && screen.id === 'A1' && isGathering
+    ? 1 - THREE.MathUtils.smoothstep(progress, 0.08, AUTO_FISH_GATHER_FRACTION)
+    : 0;
+  const visibleX = THREE.MathUtils.lerp(localX, 54, a1EntryFocus);
+  const visibleY = THREE.MathUtils.lerp(localY, 42, a1EntryFocus);
+
   return {
-    x: localX,
-    y: localY,
+    x: visibleX,
+    y: visibleY,
     angle: stage.angle - (screen.rotate ?? 0),
     visible:
       (!isGathering || screen.id === 'A1') &&
@@ -262,10 +268,62 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
 const AUTO_FISH_INSTANCE_COUNT = 50;
 const AUTO_FISH_TRAIL_COUNT = 108;
 
+function createFishTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return new THREE.CanvasTexture(canvas);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.translate(48, 16);
+  ctx.globalCompositeOperation = 'source-over';
+
+  const glow = ctx.createRadialGradient(8, 0, 2, 8, 0, 34);
+  glow.addColorStop(0, 'rgba(236,254,255,0.9)');
+  glow.addColorStop(0.42, 'rgba(125,249,255,0.36)');
+  glow.addColorStop(1, 'rgba(34,211,238,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.ellipse(6, 0, 42, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(125,249,255,0.72)';
+  ctx.beginPath();
+  ctx.moveTo(-24, 0);
+  ctx.lineTo(-42, -10);
+  ctx.lineTo(-36, 0);
+  ctx.lineTo(-42, 10);
+  ctx.closePath();
+  ctx.fill();
+
+  const body = ctx.createLinearGradient(-24, 0, 34, 0);
+  body.addColorStop(0, 'rgba(103,232,249,0.28)');
+  body.addColorStop(0.48, 'rgba(207,250,254,0.92)');
+  body.addColorStop(1, 'rgba(255,255,255,0.98)');
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.moveTo(-26, 0);
+  ctx.bezierCurveTo(-14, -11, 20, -10, 36, 0);
+  ctx.bezierCurveTo(18, 11, -14, 11, -26, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(4,47,46,0.9)';
+  ctx.beginPath();
+  ctx.arc(25, -3, 2.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function AutoFishSchoolScene({ progress, position, isOverview }: { progress: number; position: { x: number; y: number; angle: number }; isOverview: boolean }) {
   const fishRef = useRef<THREE.InstancedMesh>(null);
   const trailRef = useRef<THREE.Points>(null);
   const matrixObject = useMemo(() => new THREE.Object3D(), []);
+  const fishTexture = useMemo(() => createFishTexture(), []);
   const { viewport } = useThree();
   const fishData = useMemo(() => Array.from({ length: AUTO_FISH_INSTANCE_COUNT }, (_, index) => ({
     ring: Math.floor(index / 12),
@@ -282,17 +340,17 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
     size: 0.018 + (index % 5) * 0.006,
   })), []);
   const trailPositions = useMemo(() => new Float32Array(AUTO_FISH_TRAIL_COUNT * 3), []);
-  const trailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
+  const trailOpacity = THREE.MathUtils.smoothstep(progress, 0.01, 0.06) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
 
   useFrame(() => {
     const fishMesh = fishRef.current;
     const trail = trailRef.current;
-    const entryOpacity = THREE.MathUtils.smoothstep(progress, 0.015, 0.13);
+    const entryOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.045);
     const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
     const opacity = entryOpacity * exitOpacity;
     const centerX = (position.x / 100 - 0.5) * viewport.width;
     const centerY = (0.5 - position.y / 100) * viewport.height;
-    const schoolScale = (isOverview ? 1.52 : 1.84) * Math.min(viewport.width / 14, viewport.height / 8);
+    const schoolScale = (isOverview ? 1.52 : 2.38) * Math.min(viewport.width / 14, viewport.height / 8);
     const contraction = 1 - THREE.MathUtils.smoothstep(Math.sin(progress * Math.PI * 4) * 0.5 + 0.5, 0.56, 1) * 0.18;
     const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
     const baseAngle = -position.angle * Math.PI / 180;
@@ -319,8 +377,8 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
         const x = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
         const y = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
         const fishAngle = baseAngle + Math.sin(batchProgress * 18 + fish.seed) * 0.24 + (fish.lane % 3 - 1) * 0.08;
-        const length = 0.26 * fish.scale * schoolScale;
-        const height = 0.07 * fish.scale * schoolScale;
+        const length = 0.34 * fish.scale * schoolScale;
+        const height = 0.095 * fish.scale * schoolScale;
 
         matrixObject.position.set(x, y, 0);
         matrixObject.rotation.set(0, 0, fishAngle);
@@ -335,7 +393,7 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
       const positions = trail.geometry.attributes.position;
       const material = trail.material as THREE.PointsMaterial;
       material.opacity = trailOpacity;
-      material.size = 0.055 * (isOverview ? 0.92 : 1.12);
+      material.size = 0.065 * (isOverview ? 0.92 : 1.22);
       trailData.forEach((dot, index) => {
         const flow = (progress * 4.8 + dot.seed) % 2.3;
         const curlX = Math.sin(progress * 21 + dot.lane * 0.72 + dot.band * 1.9) * 0.38;
@@ -360,7 +418,7 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
       </points>
       <instancedMesh ref={fishRef} args={[undefined, undefined, AUTO_FISH_INSTANCE_COUNT]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial color="#cffafe" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+        <meshBasicMaterial map={fishTexture} transparent opacity={0} alphaTest={0.02} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </instancedMesh>
     </>
   );
@@ -378,7 +436,7 @@ function AutoFishSchool({ active, progress, screenId, isOverview }: { active: bo
         dpr={1}
         gl={{ alpha: true, antialias: false, powerPreference: 'high-performance' }}
         style={{
-          opacity: THREE.MathUtils.smoothstep(progress, 0.015, 0.13) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1)),
+          opacity: THREE.MathUtils.smoothstep(progress, 0, 0.045) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1)),
         }}
       >
         <AutoFishSchoolScene progress={progress} position={position} isOverview={isOverview} />
