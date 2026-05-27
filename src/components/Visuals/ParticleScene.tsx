@@ -101,6 +101,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const idleBlockRefs = useRef<Array<THREE.InstancedMesh | null>>([]);
   const meshRef = useRef<THREE.Group>(null);
   const ripplePhaseRef = useRef(0);
+  const mistRevealStateRef = useRef('');
   const count = 34000;
   const leafCount = 19000;
   const mistCount = 76000;
@@ -130,6 +131,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const previewBrightness = isOverviewScreen ? 0.34 : 1;
   const glyphTexture = useMemo(() => createGlyphTexture(), []);
   const screenLayouts = useMemo(() => Object.values(SCREEN_LAYOUT), []);
+  const screenRevealProgress = useMemo(
+    () => screenLayouts.map((screen) => getAutoFishScreenRevealProgress(screen.id)),
+    [screenLayouts]
+  );
   const screenCenters = useMemo(() => Object.entries(SCREEN_LAYOUT).map(([id, layout]) => {
     const point = layoutToWorldPoint(layout);
     return {
@@ -995,32 +1000,41 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
     if (mistRef.current) {
       const posAttr = mistRef.current.geometry.attributes.position;
-      const stride = autoFishRevealActive ? 1 : fishImpactPresence > 0.02 ? (isOverviewScreen ? 3 : 2) : 10;
+      const revealKey = autoFishRevealActive
+        ? `auto:${screenRevealProgress.map((reveal) => reveal !== null && autoFishProgress >= reveal ? '1' : '0').join('')}`
+        : 'manual';
+
+      if (mistRevealStateRef.current !== revealKey) {
+        for (let i = 0; i < mistCount; i += 1) {
+          const ix = i * 3;
+          const revealProgress = screenRevealProgress[i % screenLayouts.length];
+          const shouldHide =
+            autoFishRevealActive &&
+            revealProgress !== null &&
+            autoFishProgress < revealProgress;
+
+          if (shouldHide) {
+            posAttr.array[ix] = 9999;
+            posAttr.array[ix + 1] = 9999;
+            posAttr.array[ix + 2] = 0;
+          } else if (posAttr.array[ix] > 9000) {
+            posAttr.array[ix] = mistInitialPositions[ix];
+            posAttr.array[ix + 1] = mistInitialPositions[ix + 1];
+            posAttr.array[ix + 2] = mistInitialPositions[ix + 2];
+          }
+        }
+        mistRevealStateRef.current = revealKey;
+        posAttr.needsUpdate = true;
+      }
+
+      const stride = fishImpactPresence > 0.02 ? (isOverviewScreen ? 4 : 3) : 12;
       for (let i = 0; i < mistCount; i += stride) {
         const ix = i * 3;
+        if (posAttr.array[ix] > 9000) continue;
+
         const baseX = mistInitialPositions[ix];
         const baseY = mistInitialPositions[ix + 1];
         const baseZ = mistInitialPositions[ix + 2];
-        const mistScreen = screenLayouts[i % screenLayouts.length];
-        const revealProgress = getAutoFishScreenRevealProgress(mistScreen.id);
-        const screenPendingFishReveal =
-          autoFishRevealActive &&
-          revealProgress !== null &&
-          autoFishProgress < revealProgress;
-
-        if (screenPendingFishReveal) {
-          posAttr.array[ix] = 9999;
-          posAttr.array[ix + 1] = 9999;
-          posAttr.array[ix + 2] = 0;
-          continue;
-        }
-
-        if (posAttr.array[ix] > 9000) {
-          posAttr.array[ix] = baseX;
-          posAttr.array[ix + 1] = baseY;
-          posAttr.array[ix + 2] = baseZ;
-        }
-
         let targetX = baseX;
         let targetY = baseY;
         let targetZ = baseZ;

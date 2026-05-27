@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAudio, type FireworkBurstKind } from './hooks/useAudio';
 import { useHandTracking } from './hooks/useHandTracking';
 import { AnimatePresence, motion } from 'motion/react';
@@ -259,271 +259,130 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
   };
 }
 
-function AutoFishSchool({ active, progress, screenId, isOverview }: { active: boolean; progress: number; screenId: string; isOverview: boolean }) {
-  const position = getFishPosition(progress, screenId, isOverview);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lastDrawTimeRef = useRef(0);
+const AUTO_FISH_INSTANCE_COUNT = 50;
+const AUTO_FISH_TRAIL_COUNT = 108;
 
-  useEffect(() => {
-    if (!active || !position.visible) return;
+function AutoFishSchoolScene({ progress, position, isOverview }: { progress: number; position: { x: number; y: number; angle: number }; isOverview: boolean }) {
+  const fishRef = useRef<THREE.InstancedMesh>(null);
+  const trailRef = useRef<THREE.Points>(null);
+  const matrixObject = useMemo(() => new THREE.Object3D(), []);
+  const { viewport } = useThree();
+  const fishData = useMemo(() => Array.from({ length: AUTO_FISH_INSTANCE_COUNT }, (_, index) => ({
+    ring: Math.floor(index / 12),
+    lane: index % 12,
+    seed: index * 1.713,
+    scale: 0.82 + (index % 6) * 0.075,
+    batchDelay: (index % 3) * 0.032,
+    laneOffset: (index % 3 - 1) * 0.2,
+  })), []);
+  const trailData = useMemo(() => Array.from({ length: AUTO_FISH_TRAIL_COUNT }, (_, index) => ({
+    lane: index % 27,
+    band: Math.floor(index / 27),
+    seed: index * 0.917,
+    size: 0.018 + (index % 5) * 0.006,
+  })), []);
+  const trailPositions = useMemo(() => new Float32Array(AUTO_FISH_TRAIL_COUNT * 3), []);
+  const trailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const now = performance.now();
-    if (now - lastDrawTimeRef.current < 32) return;
-    lastDrawTimeRef.current = now;
-
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const dpr = 1;
-    const pixelWidth = Math.floor(width * dpr);
-    const pixelHeight = Math.floor(height * dpr);
-    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-      canvas.width = pixelWidth;
-      canvas.height = pixelHeight;
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-    }
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-
-    const schoolWidth = width * 0.66;
-    const schoolHeight = height * 0.62;
-    const centerX = width * position.x / 100;
-    const centerY = height * position.y / 100;
-    const schoolScale = isOverview ? 1.52 : 1.84;
+  useFrame(() => {
+    const fishMesh = fishRef.current;
+    const trail = trailRef.current;
     const entryOpacity = THREE.MathUtils.smoothstep(progress, 0.015, 0.13);
     const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
-    const fishOpacity = entryOpacity * exitOpacity;
-    const tailOpacity = THREE.MathUtils.smoothstep(progress, 0.04, 0.16) * exitOpacity;
-    const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
+    const opacity = entryOpacity * exitOpacity;
+    const centerX = (position.x / 100 - 0.5) * viewport.width;
+    const centerY = (0.5 - position.y / 100) * viewport.height;
+    const schoolScale = (isOverview ? 1.52 : 1.84) * Math.min(viewport.width / 14, viewport.height / 8);
     const contraction = 1 - THREE.MathUtils.smoothstep(Math.sin(progress * Math.PI * 4) * 0.5 + 0.5, 0.56, 1) * 0.18;
-    const scaleX = schoolWidth / 900;
-    const scaleY = schoolHeight / 600;
-    const angle = position.angle * Math.PI / 180;
+    const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
+    const baseAngle = -position.angle * Math.PI / 180;
 
-    ctx.save();
-    ctx.translate(centerX, centerY);
-    ctx.rotate(angle);
-    ctx.globalAlpha = fishOpacity;
-    ctx.shadowColor = 'rgba(34,211,238,0.32)';
-    ctx.shadowBlur = 28;
+    if (fishMesh) {
+      const material = fishMesh.material as THREE.MeshBasicMaterial;
+      material.opacity = opacity;
+      fishData.forEach((fish, index) => {
+        const batchProgress = THREE.MathUtils.clamp((progress - fish.batchDelay) / (1 - fish.batchDelay), 0, 1);
+        const presence = THREE.MathUtils.smoothstep(progress, fish.batchDelay, fish.batchDelay + 0.038) * exitOpacity;
+        if (presence <= 0.001) {
+          matrixObject.scale.setScalar(0.0001);
+          matrixObject.updateMatrix();
+          fishMesh.setMatrixAt(index, matrixObject.matrix);
+          return;
+        }
 
-    ctx.globalCompositeOperation = 'lighter';
+        const theta = fish.lane * 0.58 + fish.ring * 1.24 + batchProgress * 9;
+        const curlX = Math.sin(theta + Math.sin(batchProgress * 6 + fish.seed) * 0.9) * (0.32 + fish.ring * 0.045);
+        const curlY = Math.cos(theta * 0.92 + batchProgress * 4.7) * (0.24 + fish.ring * 0.05);
+        const dart = Math.sin(batchProgress * 36 + fish.seed) * 0.12 + Math.cos(batchProgress * 28 + fish.lane * 0.7) * 0.08;
+        const localX = (-fish.ring * 0.34 + Math.cos(fish.lane * 0.64 + fish.ring * 1.31) * (0.78 - fish.ring * 0.025) + curlX + dart + fish.laneOffset) * schoolScale * contraction;
+        const localY = (Math.sin(fish.lane * 0.76 + fish.ring * 0.69) * (0.54 + fish.ring * 0.14) + Math.sin(batchProgress * 18 + fish.seed) * 0.22 + curlY + fish.laneOffset * 0.28) * schoolScale * vortexBreath;
+        const x = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
+        const y = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
+        const fishAngle = baseAngle + Math.sin(batchProgress * 18 + fish.seed) * 0.24 + (fish.lane % 3 - 1) * 0.08;
+        const length = 0.26 * fish.scale * schoolScale;
+        const height = 0.07 * fish.scale * schoolScale;
 
-    for (let index = 0; index < 72; index += 1) {
-      const phase = progress * 46 + index * 0.77;
-      const spiral = index * 0.38 + progress * Math.PI * 7;
-      const radius = (80 + (index % 38) * 9 + Math.sin(phase) * 24) * contraction;
-      const x = (Math.cos(spiral) * radius - progress * 460 + (index % 9) * 44) * scaleX * 0.92;
-      const y = (Math.sin(spiral * 0.72) * radius * 0.46 + Math.cos(phase * 0.4) * 54) * scaleY * vortexBreath;
-      const glow = THREE.MathUtils.clamp(0.24 + Math.sin(phase * 1.3) * 0.2, 0.08, 0.48);
-      ctx.globalAlpha = tailOpacity * glow;
-      ctx.fillStyle = 'rgba(207,250,254,0.72)';
-      ctx.shadowBlur = 20;
-      ctx.beginPath();
-      ctx.arc(x, y, Math.max(0.7, (0.9 + (index % 4) * 0.42) * Math.min(scaleX, scaleY)), 0, Math.PI * 2);
-      ctx.fill();
+        matrixObject.position.set(x, y, 0);
+        matrixObject.rotation.set(0, 0, fishAngle);
+        matrixObject.scale.set(length, height, 1);
+        matrixObject.updateMatrix();
+        fishMesh.setMatrixAt(index, matrixObject.matrix);
+      });
+      fishMesh.instanceMatrix.needsUpdate = true;
     }
 
-    ctx.shadowColor = 'rgba(125,249,255,0.5)';
+    if (trail) {
+      const positions = trail.geometry.attributes.position;
+      const material = trail.material as THREE.PointsMaterial;
+      material.opacity = trailOpacity;
+      material.size = 0.055 * (isOverview ? 0.92 : 1.12);
+      trailData.forEach((dot, index) => {
+        const flow = (progress * 4.8 + dot.seed) % 2.3;
+        const curlX = Math.sin(progress * 21 + dot.lane * 0.72 + dot.band * 1.9) * 0.38;
+        const curlY = Math.cos(progress * 19 + dot.lane * 0.64 + dot.band * 1.5) * 0.28;
+        const localX = (-flow - dot.band * 0.36 + Math.sin(dot.seed + progress * 22) * 0.32 + curlX) * schoolScale;
+        const localY = (Math.sin(dot.lane * 0.73 + dot.band * 1.2 + progress * 18) * (0.38 + dot.band * 0.09) + curlY) * schoolScale;
+        trailPositions[index * 3] = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
+        trailPositions[index * 3 + 1] = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
+        trailPositions[index * 3 + 2] = 0;
+      });
+      positions.needsUpdate = true;
+    }
+  });
 
-    const batches = [
-      { delay: 0, fishStart: 0, fishCount: 32, particleStart: 0, particleCount: 64, laneOffset: -0.16, scale: 1.02 },
-      { delay: 0.032, fishStart: 32, fishCount: 28, particleStart: 64, particleCount: 58, laneOffset: 0.14, scale: 0.96 },
-      { delay: 0.064, fishStart: 60, fishCount: 24, particleStart: 122, particleCount: 58, laneOffset: 0.36, scale: 0.9 },
-    ];
+  return (
+    <>
+      <points ref={trailRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={AUTO_FISH_TRAIL_COUNT} array={trailPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#67e8f9" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} sizeAttenuation />
+      </points>
+      <instancedMesh ref={fishRef} args={[undefined, undefined, AUTO_FISH_INSTANCE_COUNT]}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial color="#cffafe" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+      </instancedMesh>
+    </>
+  );
+}
 
-    batches.forEach((batch, batchIndex) => {
-      const batchProgress = THREE.MathUtils.clamp((progress - batch.delay) / (1 - batch.delay), 0, 1);
-      const batchPresence = THREE.MathUtils.smoothstep(progress, batch.delay, batch.delay + 0.038) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
-      if (batchPresence <= 0.001) return;
-
-      for (let p = 0; p < batch.particleCount; p += 1) {
-        const index = batch.particleStart + p;
-        const lane = index % 32;
-        const band = Math.floor(index / 32);
-        const flow = (batchProgress * 520 + index * 13.7) % 280;
-        const curlX = Math.sin(batchProgress * 21 + lane * 0.72 + band * 1.9) * 38 + Math.cos(batchProgress * 15 + index * 0.31) * 22;
-        const curlY = Math.cos(batchProgress * 19 + lane * 0.64 + band * 1.5) * 34 + Math.sin(batchProgress * 17 + index * 0.27) * 18;
-        const vortex = Math.sin(batchProgress * Math.PI * 5 + index * 0.12) * 0.5 + 0.5;
-        const x = (-flow - band * 42 + Math.sin(index * 1.43 + batchProgress * 22) * 32 + curlX * vortex + batch.laneOffset * 120) * schoolScale * contraction * scaleX;
-        const y = (Math.sin(lane * 0.73 + band * 1.2 + batchProgress * 18) * (62 + band * 20) + Math.cos(index * 0.41) * 20 + curlY * vortex + batch.laneOffset * 72) * schoolScale * vortexBreath * scaleY;
-        const size = (1.25 + (index % 5) * 0.5) * Math.min(scaleX, scaleY);
-        const sparkle = THREE.MathUtils.clamp(0.42 + Math.sin(batchProgress * 55 + index * 0.91) * 0.28, 0.08, 0.76);
-
-        ctx.globalAlpha = tailOpacity * sparkle * batchPresence;
-        ctx.fillStyle = index % 7 === 0 ? 'rgba(236,254,255,0.9)' : 'rgba(103,232,249,0.72)';
-        ctx.shadowBlur = index % 7 === 0 ? 18 : 10;
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(0.8, size), 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      for (let local = 0; local < batch.fishCount; local += 1) {
-        const index = batch.fishStart + local;
-        const ring = Math.floor(local / 16) + batchIndex;
-        const lane = local % 24;
-        const drift = Math.sin(batchProgress * 8.5 + ring * 1.7) * 30 + Math.cos(batchProgress * 5.2 + index * 0.47) * 15;
-        const scatterX = Math.sin(index * 2.37) * 18 + Math.cos(index * 0.83) * 12;
-        const scatterY = Math.cos(index * 1.91) * 16 + Math.sin(index * 0.61) * 10;
-        const theta = lane * 0.56 + ring * 1.27 + batchProgress * 9;
-        const curlX = Math.sin(theta + Math.sin(batchProgress * 6 + index) * 0.9) * (42 + ring * 6) + Math.cos(batchProgress * 20 + index * 0.33) * 18;
-        const curlY = Math.cos(theta * 0.92 + batchProgress * 4.7) * (36 + ring * 8) + Math.sin(batchProgress * 18 + index * 0.41) * 16;
-        const avoidX = (Math.sin(index * 12.989 + batchProgress * 7.2) + Math.sin(index * 4.73 + batchProgress * 13)) * (13 + ring * 2);
-        const avoidY = (Math.cos(index * 9.233 + batchProgress * 6.4) + Math.sin(index * 6.11 + batchProgress * 9.6)) * (11 + ring * 2);
-        const dart = Math.sin(batchProgress * 36 + index * 1.19) * 20 + Math.cos(batchProgress * 28 + lane * 0.7) * 14;
-        const schoolX = (-ring * 56 + Math.cos(lane * 0.64 + ring * 1.31) * (112 - ring * 2) + Math.sin(batchProgress * 16 + index * 0.77) * 42 + drift + scatterX + dart + curlX + avoidX + batch.laneOffset * 150) * schoolScale * contraction * batch.scale;
-        const schoolY = (Math.sin(lane * 0.76 + ring * 0.69) * (82 + ring * 24) + Math.sin(batchProgress * 18 + index) * 38 + scatterY + Math.cos(batchProgress * 31 + index * 0.53) * 16 + curlY + avoidY + batch.laneOffset * 80) * schoolScale * vortexBreath * batch.scale;
-        const x = schoolX * scaleX;
-        const y = schoolY * scaleY;
-        const shimmer = THREE.MathUtils.clamp(0.62 + Math.sin(batchProgress * 46 + index * 1.41) * 0.24 + (index % 5) * 0.04, 0.28, 1);
-        const fishLength = (36 + (index % 6) * 5.4) * Math.min(scaleX, scaleY) * batch.scale;
-        const fishHeight = (9.6 + (index % 5) * 1.42) * Math.min(scaleX, scaleY) * batch.scale;
-        const tailLength = (26 + (index % 7) * 4.8) * Math.min(scaleX, scaleY) * batch.scale;
-        const swimPhase = batchProgress * 132 + index * 0.93;
-        const speedSync = 0.84 + Math.sin(batchProgress * Math.PI * 5 + ring) * 0.16;
-        const tailWag = Math.sin(swimPhase * speedSync) * (42 + (index % 4) * 6.8);
-        const bodyWave = Math.sin(swimPhase * 0.88) * 11.5;
-        const fishAngle = (Math.sin(batchProgress * 18 + index * 0.91) * 18 + (index % 3 - 1) * 8 + bodyWave + curlY * 0.055) * Math.PI / 180;
-        const finWave = Math.sin(swimPhase * 1.16 + index) * 10 * Math.PI / 180;
-        const bodyY = Math.sin(swimPhase * 0.62) * 2.8 * Math.min(scaleX, scaleY);
-
-      ctx.save();
-      ctx.translate(x, y + bodyY);
-      ctx.rotate(fishAngle);
-      ctx.globalAlpha = fishOpacity * shimmer * batchPresence;
-
-      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.24, 0.06, 0.22) * batchPresence;
-      ctx.shadowBlur = 18;
-      const bodyGlow = ctx.createRadialGradient(-fishLength * 0.04, 0, fishHeight * 0.22, -fishLength * 0.04, 0, fishLength * 0.98);
-      bodyGlow.addColorStop(0, 'rgba(236,254,255,0.22)');
-      bodyGlow.addColorStop(0.34, 'rgba(125,249,255,0.14)');
-      bodyGlow.addColorStop(0.72, 'rgba(34,211,238,0.045)');
-      bodyGlow.addColorStop(1, 'rgba(14,165,233,0)');
-      ctx.fillStyle = bodyGlow;
-      ctx.beginPath();
-      ctx.ellipse(-fishLength * 0.12, 0, fishLength * 1.35, fishHeight * 2.1, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      const tailAngle = tailWag * Math.PI / 180;
-      ctx.save();
-      ctx.translate(-fishLength * 0.48, Math.sin(swimPhase) * fishHeight * 0.3);
-      ctx.rotate(tailAngle * 1.12);
-      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.72, 0.2, 0.72) * batchPresence;
-      ctx.shadowBlur = 9;
-      ctx.fillStyle = 'rgba(125,249,255,0.52)';
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-fishHeight * 1.45, -fishHeight * 0.95);
-      ctx.lineTo(-fishHeight * 1.18, 0);
-      ctx.lineTo(-fishHeight * 1.45, fishHeight * 0.95);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      ctx.globalAlpha = tailOpacity * fishOpacity * 0.11 * batchPresence;
-      const plume = ctx.createRadialGradient(-fishLength * 0.72, 0, 0, -fishLength * 0.72, 0, tailLength * 1.25);
-      plume.addColorStop(0, 'rgba(125,249,255,0.34)');
-      plume.addColorStop(0.45, 'rgba(34,211,238,0.16)');
-      plume.addColorStop(1, 'rgba(8,145,178,0)');
-      ctx.fillStyle = plume;
-      ctx.beginPath();
-      ctx.ellipse(-fishLength * 0.9, 0, tailLength * 1.15, fishHeight * 1.1, tailAngle * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-
-      for (let speck = 0; speck < 1; speck += 1) {
-        const speckPhase = swimPhase + speck * 2.11;
-        ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * (0.26 + speck * 0.06), 0.08, 0.36) * batchPresence;
-        ctx.shadowBlur = 8;
-        ctx.fillStyle = speck % 2 === 0 ? 'rgba(236,254,255,0.82)' : 'rgba(125,249,255,0.62)';
-        ctx.beginPath();
-        ctx.arc(
-          -fishLength * 0.08 + Math.sin(speckPhase) * fishLength * 0.22,
-          Math.cos(speckPhase * 0.82) * fishHeight * 0.58,
-          Math.max(0.8, fishHeight * (0.07 + speck * 0.018)),
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-
-      ctx.globalAlpha = fishOpacity * shimmer * batchPresence;
-      ctx.shadowBlur = 7;
-      const bodyGradient = ctx.createLinearGradient(-fishLength * 0.45, 0, fishLength * 0.5, 0);
-      bodyGradient.addColorStop(0, 'rgba(103,232,249,0.05)');
-      bodyGradient.addColorStop(0.25, 'rgba(125,249,255,0.42)');
-      bodyGradient.addColorStop(0.62, 'rgba(240,253,250,0.9)');
-      bodyGradient.addColorStop(0.84, 'rgba(255,255,255,0.98)');
-      bodyGradient.addColorStop(1, 'rgba(125,249,255,0.13)');
-      ctx.fillStyle = bodyGradient;
-      ctx.beginPath();
-      ctx.moveTo(-fishLength * 0.5, 0);
-      ctx.bezierCurveTo(-fishLength * 0.38, -fishHeight * 0.95, fishLength * 0.22, -fishHeight * 0.78, fishLength * 0.52, 0);
-      ctx.bezierCurveTo(fishLength * 0.2, fishHeight * 0.85, -fishLength * 0.38, fishHeight * 0.95, -fishLength * 0.5, 0);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.48, 0.16, 0.5) * batchPresence;
-      ctx.shadowBlur = 5;
-      ctx.fillStyle = 'rgba(125,249,255,0.46)';
-      ctx.save();
-      ctx.translate(fishLength * 0.02, fishHeight * 0.48);
-      ctx.rotate(0.5 + finWave);
-      ctx.beginPath();
-      ctx.moveTo(0, -fishHeight * 0.15);
-      ctx.lineTo(fishLength * 0.34, 0);
-      ctx.lineTo(0, fishHeight * 0.58);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.86, 0.28, 0.86) * batchPresence;
-      ctx.shadowBlur = 12;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.beginPath();
-      ctx.arc(-fishLength * 0.02 + Math.sin(index) * 4, Math.cos(index * 1.7) * fishHeight * 0.24, Math.max(1.4, fishHeight * 0.16), 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.globalAlpha = fishOpacity * THREE.MathUtils.clamp(shimmer * 0.9, 0.36, 0.95) * batchPresence;
-      ctx.shadowBlur = 5;
-      ctx.fillStyle = 'rgba(4,47,46,0.92)';
-      ctx.beginPath();
-      ctx.arc(fishLength * 0.34, -fishHeight * 0.16, Math.max(1.6, fishHeight * 0.14), 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-      }
-    });
-
-    const bloomGradient = ctx.createRadialGradient(0, 0, 20, 0, 0, Math.max(schoolWidth, schoolHeight) * 0.58);
-    bloomGradient.addColorStop(0, 'rgba(125,249,255,0.1)');
-    bloomGradient.addColorStop(0.45, 'rgba(34,211,238,0.045)');
-    bloomGradient.addColorStop(1, 'rgba(14,165,233,0)');
-    ctx.globalAlpha = fishOpacity * 0.9;
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = bloomGradient;
-    ctx.fillRect(-schoolWidth * 0.7, -schoolHeight * 0.7, schoolWidth * 1.4, schoolHeight * 1.4);
-
-    ctx.restore();
-  }, [active, isOverview, position.angle, position.visible, position.x, position.y, progress]);
-
+function AutoFishSchool({ active, progress, screenId, isOverview }: { active: boolean; progress: number; screenId: string; isOverview: boolean }) {
+  const position = getFishPosition(progress, screenId, isOverview);
   if (!active || !position.visible) return null;
 
   return (
     <div className="fixed inset-0 z-30 pointer-events-none overflow-hidden" data-auto-fish-school>
-      <canvas
-        ref={canvasRef}
+      <Canvas
         className="absolute inset-0 h-full w-full transition-opacity duration-700"
-        data-auto-fish-body
+        camera={{ position: [0, 0, 10], fov: 50 }}
+        dpr={1}
+        gl={{ alpha: true, antialias: false, powerPreference: 'high-performance' }}
         style={{
           opacity: THREE.MathUtils.smoothstep(progress, 0.015, 0.13) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1)),
         }}
-      />
+      >
+        <AutoFishSchoolScene progress={progress} position={position} isOverview={isOverview} />
+      </Canvas>
     </div>
   );
 }
@@ -583,25 +442,27 @@ function AutoStandbyWakeOverlay({
         const h = (heightRatio / STAGE_BOUNDS.height) * height;
         const peak = local < 0.22 ? local / 0.22 : 1 - (local - 0.22) / 0.78;
         const sustain = 0.18 + Math.sin(local * Math.PI) * 0.72;
-        const alpha = THREE.MathUtils.clamp(Math.max(peak, sustain * 0.55) * alphaScale, 0, 0.95);
+        const alpha = THREE.MathUtils.clamp(Math.max(peak, sustain * 0.72) * alphaScale, 0, 1);
         const rotate = (screen.rotate ?? 0) * Math.PI / 180;
 
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(rotate);
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = 'rgba(34,211,238,0.12)';
-        ctx.strokeStyle = 'rgba(236,254,255,0.46)';
-        ctx.lineWidth = 1;
-        ctx.fillRect(-w / 2, -h / 2, w, h);
-        ctx.strokeRect(-w / 2, -h / 2, w, h);
 
-        const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(w, h) * 1.15);
-        glow.addColorStop(0, 'rgba(236,254,255,0.58)');
-        glow.addColorStop(0.45, 'rgba(34,211,238,0.2)');
+        const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(w, h) * 1.55);
+        glow.addColorStop(0, 'rgba(236,254,255,0.72)');
+        glow.addColorStop(0.36, 'rgba(34,211,238,0.28)');
+        glow.addColorStop(0.68, 'rgba(14,165,233,0.1)');
         glow.addColorStop(1, 'rgba(14,165,233,0)');
         ctx.fillStyle = glow;
-        ctx.fillRect(-w * 1.4, -h * 1.8, w * 2.8, h * 3.6);
+        ctx.fillRect(-w * 1.9, -h * 2.3, w * 3.8, h * 4.6);
+
+        ctx.globalAlpha = alpha * 0.42;
+        ctx.fillStyle = 'rgba(125,249,255,0.5)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, w * 0.42, h * 0.3, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       };
 
@@ -637,7 +498,8 @@ function AutoStandbyWakeOverlay({
   return (
     <div
       key={wakeKey}
-      className="pointer-events-none fixed inset-0 z-[11] overflow-hidden"
+      className="pointer-events-none fixed inset-0 overflow-hidden"
+      style={{ zIndex: 45 }}
     >
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
@@ -1605,6 +1467,7 @@ export default function App() {
 
   const startAutoTreeShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
+    startStandbyWake();
     audioAutoStartAllowedRef.current = allowAudioStart;
     setVisualMode('tree');
     setTreeControlMode('auto');
@@ -1712,7 +1575,7 @@ export default function App() {
       });
     }, AUTO_REVEAL_MS + AUTO_FISH_DURATION_MS + 2500);
     autoTimelineTimersRef.current.push(growTimer);
-  }, [clearAutoTimeline, restartTreeMusic, setMusicEvolution, soundEnabled, startAudio, syncToFirebase, triggerAutoPulse, updateTreeLayers]);
+  }, [clearAutoTimeline, restartTreeMusic, setMusicEvolution, soundEnabled, startAudio, startStandbyWake, syncToFirebase, triggerAutoPulse, updateTreeLayers]);
 
   const setManualTreeControl = useCallback(() => {
     clearAutoTimeline();
