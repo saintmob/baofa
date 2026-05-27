@@ -390,15 +390,11 @@ function AutoFishSchool({ active, progress, screenId, isOverview }: { active: bo
 function AutoStandbyWakeOverlay({
   active,
   wakeKey,
-  screenId,
   isOverview,
-  isMaster,
 }: {
   active: boolean;
   wakeKey: number;
-  screenId: string;
   isOverview: boolean;
-  isMaster: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -466,20 +462,15 @@ function AutoStandbyWakeOverlay({
         ctx.restore();
       };
 
-      if (isOverview) {
-        SHOW_SCREEN_LAYOUT_ITEMS.forEach((screen) => drawScreenGlow(screen));
-        const veilAlpha = Math.max(0, 1 - elapsed / STANDBY_WAKE_TOTAL_MS) * 0.16;
-        if (veilAlpha > 0.001) {
-          const veil = ctx.createRadialGradient(width * 0.5, height * 0.5, 0, width * 0.5, height * 0.5, Math.max(width, height) * 0.56);
-          veil.addColorStop(0, `rgba(125,249,255,${veilAlpha})`);
-          veil.addColorStop(1, 'rgba(14,165,233,0)');
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = veil;
-          ctx.fillRect(0, 0, width, height);
-        }
-      } else {
-        const screen = isMaster ? MASTER_SCREEN : getScreenLayout(screenId);
-        drawScreenGlow(screen, 1.15);
+      SHOW_SCREEN_LAYOUT_ITEMS.forEach((screen) => drawScreenGlow(screen));
+      const veilAlpha = Math.max(0, 1 - elapsed / STANDBY_WAKE_TOTAL_MS) * 0.16;
+      if (veilAlpha > 0.001) {
+        const veil = ctx.createRadialGradient(width * 0.5, height * 0.5, 0, width * 0.5, height * 0.5, Math.max(width, height) * 0.56);
+        veil.addColorStop(0, `rgba(125,249,255,${veilAlpha})`);
+        veil.addColorStop(1, 'rgba(14,165,233,0)');
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = veil;
+        ctx.fillRect(0, 0, width, height);
       }
 
       if (elapsed < STANDBY_WAKE_TOTAL_MS + 600) {
@@ -491,9 +482,9 @@ function AutoStandbyWakeOverlay({
     return () => {
       if (frameId) cancelAnimationFrame(frameId);
     };
-  }, [active, isMaster, isOverview, screenId, wakeKey]);
+  }, [active, isOverview, wakeKey]);
 
-  if (!active) return null;
+  if (!active || !isOverview) return null;
 
   return (
     <div
@@ -2053,9 +2044,7 @@ export default function App() {
       <AutoStandbyWakeOverlay
         active={standbyWakeActive && visualMode === 'tree'}
         wakeKey={standbyWakeKey}
-        screenId={screenId}
         isOverview={isOverview}
-        isMaster={isMaster}
       />
 
       <div className="absolute inset-0 z-20 flex pointer-events-none">
