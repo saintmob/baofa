@@ -1025,7 +1025,8 @@ export default function App() {
     if (gestureNeedsReleaseRef.current && !handGestureActive) {
       gestureNeedsReleaseRef.current = false;
     }
-    const handGestureEligible = handGestureActive && gestureInputArmedRef.current && !gestureNeedsReleaseRef.current;
+    const manualTreeGestureInput = visualMode === 'tree' && treeControlMode === 'manual';
+    const handGestureEligible = handGestureActive && (gestureInputArmedRef.current || manualTreeGestureInput) && !gestureNeedsReleaseRef.current;
     if (!treeTriggeredRef.current && !gestureCompletedRef.current && !gestureRoundLockedRef.current) {
       const direction = handGestureEligible ? 1 : -1;
       const duration = handGestureEligible ? GESTURE_CONFIRM_MS : GESTURE_RETREAT_MS;
@@ -1150,7 +1151,8 @@ export default function App() {
     }
 
     if (treeControllerRef.current || !treeTriggeredRef.current) {
-      setGestureActive(treeFadingRef.current ? false : handGestureActive && (gestureInputArmedRef.current || treeTriggeredRef.current));
+      const manualTreeGestureInput = visualMode === 'tree' && treeControlMode === 'manual';
+      setGestureActive(treeFadingRef.current ? false : handGestureActive && (gestureInputArmedRef.current || manualTreeGestureInput || treeTriggeredRef.current));
       const floor = treeFadingRef.current ? 0.02 : treeGrowthRef.current > 0 ? 0.12 + treeGrowthRef.current * 0.18 : 0.02;
       intensityRef.current = treeFadingRef.current ? intensityRef.current : Math.max(floor, intensityRef.current - 0.006);
       setIntensity(intensityRef.current);
@@ -2262,6 +2264,36 @@ export default function App() {
           >
             <Music2 size={15} />
             {useSampleLibrary ? 'Sample' : 'Scale'}
+          </button>
+          <button
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              audioAutoStartAllowedRef.current = true;
+              if (visualMode === 'firework') {
+                if (fireworkControlMode === 'auto') {
+                  setManualFireworkControl();
+                } else {
+                  void startAutoFireworkShow();
+                }
+                return;
+              }
+
+              if (treeControlMode === 'auto') {
+                setManualTreeControl();
+              } else {
+                void startAutoTreeShow();
+              }
+            }}
+            className={`ml-3 inline-flex h-[44px] items-center rounded-full border px-4 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
+              activeControlMode === 'auto'
+                ? 'border-cyan-200/60 bg-cyan-200/18 text-cyan-50 shadow-[0_0_22px_rgba(34,211,238,0.28)]'
+                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
+            }`}
+            title={activeControlMode === 'auto' ? 'Automation on' : 'Automation off'}
+            aria-pressed={activeControlMode === 'auto'}
+          >
+            {activeControlMode === 'auto' ? 'Auto' : 'Manual'}
           </button>
           <button
             onPointerDown={(event) => event.stopPropagation()}
