@@ -748,6 +748,7 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
   const [showWebGLDebug, setShowWebGLDebug] = useState(false);
+  const [hideForcedWebGLDebug, setHideForcedWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
   const [screenRoute, setScreenRoute] = useState<ScreenRoute | null>(null);
   const [screenRoutes, setScreenRoutes] = useState<Record<string, ScreenRoute>>({});
@@ -2049,7 +2050,7 @@ export default function App() {
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
   const shouldShowMenu = screenPresentation.showMenu || isLocalPreview;
-  const debugEnabled = screenPresentation.showDebug || (shouldShowMenu && showWebGLDebug);
+  const debugEnabled = (screenPresentation.showDebug && !hideForcedWebGLDebug) || (shouldShowMenu && showWebGLDebug);
   const autoFishScreenId = isOverview ? 'OVERVIEW' : screenId;
   const focusedScreenId = isOverview ? 'OVERVIEW' : screenId;
   const autoFishStage = autoFishActive ? getFishStagePosition(autoFishProgress) : null;
@@ -2237,8 +2238,16 @@ export default function App() {
             <MonitorCog size={18} />
           </button>
           <button
-            onClick={() => setShowWebGLDebug((value) => !value)}
-            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${showWebGLDebug ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
+            onClick={() => {
+              if (debugEnabled) {
+                setShowWebGLDebug(false);
+                setHideForcedWebGLDebug(true);
+              } else {
+                setHideForcedWebGLDebug(false);
+                setShowWebGLDebug(true);
+              }
+            }}
+            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${debugEnabled ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
             title="WebGL debug"
           >
             <Activity size={18} />
@@ -2582,18 +2591,20 @@ export default function App() {
                 <Activity size={14} />
                 <span>WebGL Debug / 调试</span>
               </div>
-              {screenPresentation.showDebug ? (
+              {screenPresentation.showDebug && !hideForcedWebGLDebug && (
                 <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
                   4300
                 </span>
-              ) : (
-                <button
-                  onClick={() => setShowWebGLDebug(false)}
-                  className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
-                >
-                  Off
-                </button>
               )}
+              <button
+                onClick={() => {
+                  setShowWebGLDebug(false);
+                  setHideForcedWebGLDebug(true);
+                }}
+                className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
+              >
+                Off
+              </button>
             </div>
 
             {webglStats ? (
