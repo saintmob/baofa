@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
 import { APP_PORT, BAOFA_NATIVE_URL } from './lib/runtimeConfig';
+import { ShowRuntimeSettingsPanel } from './components/ShowRuntimeSettingsPanel';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, Route, Sparkles, Volume2, VolumeX } from 'lucide-react';
@@ -2601,6 +2602,7 @@ export default function App() {
         </div>
       </div>
       )}
+      <ShowRuntimeSettingsPanel status={showControlStatus} />
     </div>
   );
 }
