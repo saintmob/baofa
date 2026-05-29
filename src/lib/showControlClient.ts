@@ -245,10 +245,10 @@ function createFirebaseClient(options: ClientOptions) {
   const publishFirebasePatch = async (patch: Record<string, unknown>) => {
     const updates: Record<string, unknown> = {
       [`modules/${options.module}`]: patch,
-      [`state/modules/${options.module}`]: patch,
       'state/updatedAt': Date.now(),
       [`clients/${safePath(options.clientId)}/lastSeen`]: Date.now(),
     };
+    Object.assign(updates, makeStateModuleUpdates(options.module, patch));
     if (options.module === 'audio' && typeof patch.bpm === 'number') updates['state/show/bpm'] = patch.bpm;
     await firebasePatch(rootPath, updates);
   };
@@ -345,6 +345,19 @@ async function firebaseWrite(method: 'PUT' | 'PATCH', path: string, value: unkno
 
 function jsonUrl(path: string) {
   return `${databaseUrl}/${path}.json`;
+}
+
+function makeStateModuleUpdates(module: ModuleName, patch: Record<string, unknown>) {
+  const updates: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (module === 'interaction' && isControlOwnedInteractionField(key)) continue;
+    updates[`state/modules/${module}/${safePath(key)}`] = value;
+  }
+  return updates;
+}
+
+function isControlOwnedInteractionField(key: string) {
+  return ['screenRoutes', 'screenRoutePreset', 'screenPresentation', 'screenTopology', 'screenRegistry'].includes(key);
 }
 
 function safePath(value: string) {
