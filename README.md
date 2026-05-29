@@ -60,7 +60,7 @@ npm run lint
 VITE_LAN_HOST=192.168.1.10 npm run dev
 ```
 
-也可以设置为 `SHOW_LAN_HOST`。代码会优先使用这个主机 IP；如果不设置，则回退到当前浏览器访问到的主机名。
+代码会优先使用这个主机 IP；如果不设置，则回退到当前浏览器访问到的主机名。
 
 如果你确实需要覆盖后端或屏幕跳转地址，也可以继续用 `VITE_SHOW_BACKEND_URL` / `VITE_SHOW_WS_URL`。屏幕路由 URL 现在由 4300 后端返回，前端不再自行拼接。
 

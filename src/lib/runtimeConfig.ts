@@ -1,5 +1,5 @@
 const env = (import.meta as any).env || {};
-const lanHost = String(env.VITE_LAN_HOST || env.SHOW_LAN_HOST || '').trim();
+const lanHost = String(env.VITE_LAN_HOST || '').trim();
 
 function getBrowserHost() {
   return typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
