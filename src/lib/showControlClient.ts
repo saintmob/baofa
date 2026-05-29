@@ -16,7 +16,8 @@ export type ControlCommand = {
 
 type ServerMessage =
   | { type: 'state.snapshot'; state: unknown }
-  | { type: 'state.patch'; state: unknown }
+  | { type: 'state.patch'; module: ModuleName; patch: Record<string, unknown>; updatedAt?: number }
+  | { type: 'show.patch'; patch: Record<string, unknown>; updatedAt?: number }
   | ControlCommand
   | { type: 'control.ack'; ok: boolean; command: ControlCommand }
   | { type: 'error'; error: string }
