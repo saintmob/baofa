@@ -46,14 +46,56 @@ function createCommandId(prefix: string) {
 }
 
 export function createShowControlClient(options: ClientOptions) {
+  if (!controlToken.trim()) {
+    options.onStatus?.('offline');
+    options.onError?.('Control token is required before show control can connect');
+    return createDisabledClient();
+  }
+  if (!isUsableWebSocketUrl() && (transport === 'websocket' || transport === 'cloudflare') && databaseUrl) {
+    options.onError?.(`WebSocket URL ${wsUrl || '(empty)'} is not usable from this page; falling back to Firebase`);
+    return createFirebaseClient(options);
+  }
   if (shouldUseFirebase()) return createFirebaseClient(options);
   return createWebSocketClient(options);
 }
 
+function createDisabledClient() {
+  return {
+    sendCommand() {
+      return;
+    },
+    publishState() {
+      return;
+    },
+    async postState() {
+      throw new Error('Control token is required');
+    },
+    close() {
+      return;
+    },
+  };
+}
+
 function shouldUseFirebase() {
   if (transport === 'firebase') return Boolean(databaseUrl);
-  if (transport === 'websocket') return false;
-  return Boolean(databaseUrl) && backendUrl.includes('vercel.app');
+  if (transport === 'websocket' || transport === 'cloudflare') return !isUsableWebSocketUrl() && Boolean(databaseUrl);
+  if (isUsableWebSocketUrl()) return false;
+  return Boolean(databaseUrl);
+}
+
+function isUsableWebSocketUrl() {
+  if (!wsUrl) return false;
+  try {
+    const url = new URL(wsUrl);
+    if (!['ws:', 'wss:'].includes(url.protocol)) return false;
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && url.protocol === 'ws:') return false;
+    const localHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+    if (typeof window !== 'undefined' && !localHosts.has(window.location.hostname) && localHosts.has(url.hostname)) return false;
+    if (url.hostname.endsWith('vercel.app')) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createWebSocketClient(options: ClientOptions) {
@@ -271,6 +313,7 @@ function openStream(path: string, onRemoteChange: () => void) {
 
 async function firebaseGet<T>(path: string): Promise<T | null> {
   const response = await fetch(jsonUrl(path));
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Firebase GET ${path} failed: ${response.status}`);
   return response.json() as Promise<T | null>;
 }
