@@ -83,6 +83,14 @@ function normalizeScreenOccupancyId(value: string | null | undefined) {
   return value === 'MASTER' ? 'A1' : value;
 }
 
+function commandTargetsScreen(target: string | undefined, screenId: string, clientId: string) {
+  const normalizedTarget = normalizeScreenOccupancyId(target) || target || '';
+  if (!isKnownScreenId(normalizedTarget)) return true;
+  const normalizedScreenId = normalizeScreenOccupancyId(screenId) || screenId;
+  const normalizedClientId = normalizeScreenOccupancyId(clientId) || clientId;
+  return normalizedTarget === normalizedScreenId || normalizedTarget === normalizedClientId;
+}
+
 const effectModes: Array<{ mode: 'idle' | 'interaction' | 'flow' | 'climax'; label: string; intensity: number }> = [
   { mode: 'idle', label: 'CALM / 静止', intensity: 0.08 },
   { mode: 'flow', label: 'FLOW / 流动', intensity: 0.42 },
@@ -1807,6 +1815,8 @@ export default function App() {
   const applyShowControlCommand = useCallback((command: ControlCommand) => {
     if (command.module && command.module !== 'interaction' && command.module !== 'show') return;
     const value = command.value;
+    const targetedCommand = ['setMode', 'setInteractionMode', 'setIntensity', 'resetTree', 'pulseScreen'].includes(command.command);
+    if (targetedCommand && !commandTargetsScreen(command.target, screenId, showControlClientIdRef.current)) return;
 
     if ((command.command === 'setMode' || command.command === 'setInteractionMode') && typeof value === 'string') {
       if (value === 'idle' || value === 'interaction' || value === 'flow' || value === 'climax') {
