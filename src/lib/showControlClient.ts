@@ -101,6 +101,7 @@ function isUsableWebSocketUrl() {
 function createWebSocketClient(options: ClientOptions) {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
+  let heartbeatTimer: number | null = null;
   let closed = false;
   let lastPatch = '';
   let pendingPatch: Record<string, unknown> | null = null;
@@ -128,6 +129,10 @@ function createWebSocketClient(options: ClientOptions) {
       if (pendingPatch) {
         send({ type: 'module.statePatch', module: options.module, source: options.clientId, patch: pendingPatch });
       }
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = window.setInterval(() => {
+        send({ type: 'heartbeat', clientId: options.clientId, sentAt: Date.now() });
+      }, 10_000);
     });
 
     socket.addEventListener('message', (event) => {
@@ -142,6 +147,8 @@ function createWebSocketClient(options: ClientOptions) {
     socket.addEventListener('close', () => {
       if (closed) return;
       options.onStatus?.('offline');
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
       reconnectTimer = window.setTimeout(connect, 1200);
     });
 
@@ -181,6 +188,7 @@ function createWebSocketClient(options: ClientOptions) {
     close() {
       closed = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
       socket?.close();
     },
   };

@@ -40,8 +40,16 @@ function isLocalHost(hostname: string) {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
 }
 
+function isLanHost(hostname: string) {
+  return hostname.endsWith('.local') ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+}
+
 function isLocalRuntime() {
-  return isLocalHost(getBrowserHost());
+  const host = getBrowserHost();
+  return isLocalHost(host) || isLanHost(host);
 }
 
 function resolveHttpOrigin(port: number) {
@@ -67,6 +75,16 @@ function baseDefaults(): ShowRuntimeSettings {
 function normalizeRuntimeUrl(value: string | undefined) {
   const trimmed = String(value || '').trim();
   return trimmed ? trimmed.replace(/\/$/, '') : '';
+}
+
+function normalizeLanEndpoint(value: string) {
+  const url = parseUrl(value);
+  if (!url) return value;
+  const browserHost = getBrowserHost();
+  if (isLanHost(browserHost) && isLocalHost(url.hostname)) {
+    url.hostname = lanHost || browserHost;
+  }
+  return url.toString().replace(/\/$/, '');
 }
 
 function parseUrl(value: string) {
@@ -96,7 +114,7 @@ function isUsableWebSocketEndpoint(value: string) {
 }
 
 function chooseUrl(value: string | undefined, fallback: string, isUsable: (url: string) => boolean) {
-  const normalized = normalizeRuntimeUrl(value);
+  const normalized = normalizeLanEndpoint(normalizeRuntimeUrl(value));
   return normalized && isUsable(normalized) ? normalized : fallback;
 }
 
