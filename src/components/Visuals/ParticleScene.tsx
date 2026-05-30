@@ -116,9 +116,11 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   const { viewport } = useThree();
   const screenCenter = getScreenCenter(screenId);
   const isOverviewScreen = screenId === 'OVERVIEW';
+  const isWideMasterScreen = screenId === 'A1' || screenId === 'MASTER';
+  const masterFieldCenter = useMemo(() => layoutToWorldPoint(SCREEN_LAYOUT.A1), []);
   const singleScreenScale = {
-    x: (viewport.width / 11.2) * 1.08,
-    y: (viewport.height / 6.8) * 1.08,
+    x: (viewport.width / 11.2) * (isWideMasterScreen ? 0.58 : 1.08),
+    y: (viewport.height / 6.8) * (isWideMasterScreen ? 0.58 : 1.08),
     z: 0.9,
   };
   const sceneScale = isOverviewScreen
@@ -265,6 +267,17 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
 
   const mistPositions = useMemo(() => {
     const pos = new Float32Array(mistCount * 3);
+    if (isWideMasterScreen) {
+      for (let i = 0; i < mistCount; i++) {
+        const xSequence = (i * 0.7548776662466927) % 1;
+        const ySequence = (i * 0.5698402909980532) % 1;
+        pos[i * 3] = masterFieldCenter.x + (xSequence - 0.5 + (Math.random() - 0.5) * 0.01) * 18.8;
+        pos[i * 3 + 1] = masterFieldCenter.y + (ySequence - 0.5 + (Math.random() - 0.5) * 0.01) * 11.2;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 12;
+      }
+      return pos;
+    }
+
     const particlesPerScreen = Math.ceil(mistCount / screenLayouts.length);
     const gridCols = 80;
     const gridRows = Math.ceil(particlesPerScreen / gridCols);
@@ -281,7 +294,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       pos[i * 3 + 2] = (Math.random() - 0.5) * 14;
     }
     return pos;
-  }, [mistCount, screenLayouts]);
+  }, [isWideMasterScreen, masterFieldCenter.x, masterFieldCenter.y, mistCount, screenLayouts]);
   const mistInitialPositions = useMemo(() => new Float32Array(mistPositions), [mistPositions]);
 
   const squareData = useMemo(() => {
@@ -294,6 +307,34 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       speed: number;
       screen: { id?: string; col: number; row: number };
     }> = [];
+    if (isWideMasterScreen) {
+      const squaresForMaster = 180;
+      const squareCols = 20;
+      const squareRows = Math.ceil(squaresForMaster / squareCols);
+      for (let i = 0; i < squaresForMaster; i++) {
+        const gridX = i % squareCols;
+        const gridY = Math.floor(i / squareCols) % squareRows;
+        squares.push({
+          position: new THREE.Vector3(
+            masterFieldCenter.x + ((gridX + 0.18 + Math.random() * 0.64) / squareCols - 0.5) * 18.4,
+            masterFieldCenter.y + ((gridY + 0.18 + Math.random() * 0.64) / squareRows - 0.5) * 10.8,
+            (Math.random() - 0.5) * 5
+          ),
+          rotation: new THREE.Euler(0, 0, Math.random() * Math.PI),
+          scale: 0.05 + Math.random() * 0.035,
+          drift: new THREE.Vector3(
+            0.12 + Math.random() * 0.26,
+            0.1 + Math.random() * 0.24,
+            0.1 + Math.random() * 0.22
+          ),
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.55 + Math.random() * 0.95,
+          screen: SCREEN_LAYOUT.A1,
+        });
+      }
+      return squares;
+    }
+
     const squaresPerScreen = 36;
     const squareCols = 9;
     const squareRows = Math.ceil(squaresPerScreen / squareCols);
@@ -324,7 +365,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       }
     });
     return squares;
-  }, [screenLayouts]);
+  }, [isWideMasterScreen, masterFieldCenter.x, masterFieldCenter.y, screenLayouts]);
 
   const idleBlockData = useMemo(() => {
     const blocks: Array<{
@@ -338,6 +379,40 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       colorGroup: number;
     }> = [];
     for (let i = 0; i < idleBlockCount; i++) {
+      if (isWideMasterScreen) {
+        const gridCols = 34;
+        const gridRows = Math.ceil(idleBlockCount / gridCols);
+        const gridX = i % gridCols;
+        const gridY = Math.floor(i / gridCols) % gridRows;
+        blocks.push({
+          position: new THREE.Vector3(
+            masterFieldCenter.x + ((gridX + Math.random()) / gridCols - 0.5) * 18.6,
+            masterFieldCenter.y + ((gridY + Math.random()) / gridRows - 0.5) * 11,
+            (Math.random() - 0.5) * 8
+          ),
+          rotation: new THREE.Euler(
+            Math.random() * Math.PI,
+            Math.random() * Math.PI,
+            Math.random() * Math.PI
+          ),
+          scale: 0.016 + Math.random() * 0.02,
+          drift: new THREE.Vector3(
+            0.08 + Math.random() * 0.18,
+            0.08 + Math.random() * 0.18,
+            0.08 + Math.random() * 0.18
+          ),
+          spin: new THREE.Vector3(
+            (Math.random() - 0.5) * 1.6,
+            (Math.random() - 0.5) * 1.7,
+            (Math.random() - 0.5) * 2
+          ),
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.42 + Math.random() * 0.9,
+          colorGroup: i % 5,
+        });
+        continue;
+      }
+
       const angle = Math.random() * Math.PI * 2;
       const radius = Math.pow(Math.random(), 0.68);
       blocks.push({
@@ -368,7 +443,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       });
     }
     return blocks;
-  }, [idleBlockCount]);
+  }, [idleBlockCount, isWideMasterScreen, masterFieldCenter.x, masterFieldCenter.y]);
 
   const [energyPositions, energyInitial, energyOrder] = useMemo(() => {
     const pos = new Float32Array(energyCount * 3);
@@ -434,7 +509,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, [glyphCount]);
 
   const [branchLinePositions, branchLineOrder] = useMemo(() => {
-    const segments = 180;
+    const segments = isWideMasterScreen ? 320 : 180;
     const pos = new Float32Array(segments * 2 * 3);
     const order = new Float32Array(segments);
     for (let i = 0; i < segments; i++) {
@@ -442,10 +517,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       const reach = 0.18 + Math.random() * 0.82;
       const side = Math.random() > 0.5 ? 1 : -1;
       const y0 = -15 + branchBase * 29;
-      const x0 = Math.sin(branchBase * 11) * 0.8;
-      const x1 = x0 + side * reach * (4 + branchBase * 15);
-      const y1 = y0 + reach * (3 + branchBase * 3) - Math.pow(reach, 1.4) * 4;
-      const z = (Math.random() - 0.5) * 3;
+      const x0 = Math.sin(branchBase * 11) * (isWideMasterScreen ? 1.45 : 0.8);
+      const x1 = x0 + side * reach * (isWideMasterScreen ? 7.2 + branchBase * 24 : 4 + branchBase * 15);
+      const y1 = y0 + reach * (isWideMasterScreen ? 3.8 + branchBase * 4.2 : 3 + branchBase * 3) - Math.pow(reach, 1.4) * (isWideMasterScreen ? 3.2 : 4);
+      const z = (Math.random() - 0.5) * (isWideMasterScreen ? 4.2 : 3);
       const ix = i * 6;
       pos[ix] = x0;
       pos[ix + 1] = y0;
@@ -453,10 +528,10 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       pos[ix + 3] = x1;
       pos[ix + 4] = y1;
       pos[ix + 5] = z + (Math.random() - 0.5) * 2;
-      order[i] = branchBase + reach * 0.16;
+      order[i] = branchBase + reach * (isWideMasterScreen ? 0.12 : 0.16);
     }
     return [pos, order];
-  }, []);
+  }, [isWideMasterScreen]);
 
   const [contourPositions, contourOrder] = useMemo(() => {
     const rings = 10;
@@ -484,7 +559,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
   }, []);
 
   const [fiberPositions, fiberOrder, fiberColors] = useMemo(() => {
-    const segmentCount = 19000;
+    const segmentCount = isWideMasterScreen ? 26000 : 19000;
     const pos = new Float32Array(segmentCount * 2 * 3);
     const order = new Float32Array(segmentCount);
     const colors = new Float32Array(segmentCount * 2 * 3);
@@ -518,7 +593,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       }
     };
 
-    for (let strand = 0; strand < 760; strand++) {
+    const strandCount = isWideMasterScreen ? 1080 : 760;
+    for (let strand = 0; strand < strandCount; strand++) {
       const type = Math.random();
       const branchSide = Math.random() > 0.5 ? 1 : -1;
       const baseT = Math.random();
@@ -549,8 +625,8 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           -15 + t * 28,
           (Math.random() - 0.5) * 2.4
         );
-        const reach = 4.2 + Math.random() * 9.5;
-        const lift = 1.8 + Math.random() * 3.2;
+        const reach = 4.2 + Math.random() * (isWideMasterScreen ? 13.5 : 9.5);
+        const lift = 1.8 + Math.random() * (isWideMasterScreen ? 4.4 : 3.2);
         growStart = Math.max(0.04, (start.y + 16) / 31);
         growEnd = Math.min(1, growStart + 0.18 + Math.random() * 0.22);
         points.push(
@@ -561,13 +637,13 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         );
       } else {
         const angle = Math.random() * Math.PI * 2;
-        const radius = Math.pow(Math.random(), 0.7) * 14;
+        const radius = Math.pow(Math.random(), 0.7) * (isWideMasterScreen ? 19 : 14);
         const start = new THREE.Vector3(
           trunkCenterOffsetX + Math.cos(angle) * radius,
           1.5 + Math.random() * 14,
           Math.sin(angle) * 2.2
         );
-        const sweep = 2.2 + Math.random() * 6.5;
+        const sweep = 2.2 + Math.random() * (isWideMasterScreen ? 9.5 : 6.5);
         growStart = Math.max(0.04, (start.y + 16) / 31);
         growEnd = Math.min(1, growStart + 0.12 + Math.random() * 0.2);
         points.push(
@@ -648,15 +724,15 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       }
     };
 
-    addScreenBranch('C1', -1, 5.6, 16);
-    addScreenBranch('C2', -1, 4.2, 14);
-    addScreenBranch('L1', -1, 1.2, 14);
-    addScreenBranch('L2', -1, -1.2, 12);
-    addScreenBranch('R1', 1, 1.2, 14);
-    addScreenBranch('R2', 1, -1.2, 12);
+    addScreenBranch('C1', -1, 5.6, isWideMasterScreen ? 24 : 16);
+    addScreenBranch('C2', -1, 4.2, isWideMasterScreen ? 22 : 14);
+    addScreenBranch('L1', -1, 1.2, isWideMasterScreen ? 22 : 14);
+    addScreenBranch('L2', -1, -1.2, isWideMasterScreen ? 20 : 12);
+    addScreenBranch('R1', 1, 1.2, isWideMasterScreen ? 22 : 14);
+    addScreenBranch('R2', 1, -1.2, isWideMasterScreen ? 20 : 12);
 
     return [pos, order, colors];
-  }, []);
+  }, [isWideMasterScreen]);
 
   const [rootFiberPositions, rootFiberOrder, rootFiberColors] = useMemo(() => {
     const segmentCount = 9000;
@@ -780,6 +856,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const interactionPreview = mode === 'interaction' ? 0.11 : 0;
     const renderGrowth = Math.max(visibleGrowth, interactionPreview);
     const idleMist = visibleGrowth <= 0.001 ? Math.min(1, 0.58 + intensity * 0.42) : visibleGrowth;
+    const masterMistDensity = isWideMasterScreen ? 0.25 : 1;
     const sourceLayout = pulseSource ? SCREEN_LAYOUT[pulseSource] : null;
     const pulseAge = pulseTime ? (Date.now() - pulseTime) / 1000 : 99;
     const fishPoint = autoFishStage ? layoutToWorldPoint(autoFishStage) : null;
@@ -792,11 +869,12 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
     const fishLoadShed = fishImpactPresence * (isOverviewScreen ? 0.82 : 0.58);
     const tempoPalette = [
       new THREE.Color("#22d3ee"),
-      new THREE.Color("#38bdf8"),
-      new THREE.Color("#6366f1"),
-      new THREE.Color("#8b5cf6"),
+      new THREE.Color("#2563eb"),
+      new THREE.Color("#7c3aed"),
       new THREE.Color("#ec4899"),
+      new THREE.Color("#ef4444"),
       new THREE.Color("#f97316"),
+      new THREE.Color("#facc15"),
       new THREE.Color("#bef264"),
       new THREE.Color("#ffffff"),
     ];
@@ -827,16 +905,28 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
       mat.visible = opacityRef.current > 0.0001;
 
       // Color Spectrum Shift
-      const c1 = new THREE.Color("#4ade80");
-      const c2 = new THREE.Color("#bef264");
-      const c3 = new THREE.Color("#fef08a");
-      const c4 = new THREE.Color("#ffffff");
-      if (intensity < 0.4) {
-        colorRef.current.copy(c1).lerp(c2, intensity / 0.4);
-      } else if (intensity < 0.8) {
-        colorRef.current.copy(c2).lerp(c3, (intensity - 0.4) / 0.4);
+      const c1 = new THREE.Color("#22d3ee");
+      const c2 = new THREE.Color("#2563eb");
+      const c3 = new THREE.Color("#a855f7");
+      const c4 = new THREE.Color("#ec4899");
+      const c5 = new THREE.Color("#f97316");
+      const c6 = new THREE.Color("#facc15");
+      const c7 = new THREE.Color("#bef264");
+      const c8 = new THREE.Color("#ffffff");
+      if (intensity < 0.18) {
+        colorRef.current.copy(c1).lerp(c2, intensity / 0.18);
+      } else if (intensity < 0.34) {
+        colorRef.current.copy(c2).lerp(c3, (intensity - 0.18) / 0.16);
+      } else if (intensity < 0.5) {
+        colorRef.current.copy(c3).lerp(c4, (intensity - 0.34) / 0.16);
+      } else if (intensity < 0.66) {
+        colorRef.current.copy(c4).lerp(c5, (intensity - 0.5) / 0.16);
+      } else if (intensity < 0.82) {
+        colorRef.current.copy(c5).lerp(c6, (intensity - 0.66) / 0.16);
+      } else if (intensity < 0.94) {
+        colorRef.current.copy(c6).lerp(c7, (intensity - 0.82) / 0.12);
       } else {
-        colorRef.current.copy(c3).lerp(c4, (intensity - 0.8) / 0.2);
+        colorRef.current.copy(c7).lerp(c8, (intensity - 0.94) / 0.06);
       }
       mat.color.copy(c4).lerp(bloomColor, bloomPhase * 0.88);
 
@@ -853,7 +943,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
         mistMat.opacity = Math.min(0.62, 0.16 + idleMist * 0.36 + intensity * 0.22 + interactionPreview * 0.25) * (isOverviewScreen ? 0.58 : 1) * (1 - fishLoadShed * 0.72);
         mistMat.size = (0.05 + Math.max(idleMist, interactionPreview) * 0.07 + intensity * 0.06) * (isOverviewScreen ? 0.74 : 1);
         mistMat.color.copy(tempoColor);
-        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1) * (1 - fishLoadShed * 0.78)));
+        mistRef.current.geometry.setDrawRange(0, Math.floor(mistCount * Math.max(idleMist, interactionPreview) * (isOverviewScreen ? 0.46 : 1) * masterMistDensity * (1 - fishLoadShed * 0.78)));
       }
 
       if (energyRef.current) {
@@ -1009,6 +1099,7 @@ export const ParticleScene: React.FC<ParticleSceneProps> = ({
           const ix = i * 3;
           const revealProgress = screenRevealProgress[i % screenLayouts.length];
           const shouldHide =
+            !isWideMasterScreen &&
             autoFishRevealActive &&
             revealProgress !== null &&
             autoFishProgress < revealProgress;

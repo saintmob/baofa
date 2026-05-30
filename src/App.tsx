@@ -32,7 +32,7 @@ const GESTURE_RETREAT_MS = 1400;
 const GESTURE_FADE_MS = 520;
 const STALE_TREE_STATE_MS = 30000;
 const TREE_COLOR_RAMP_MS = 4500;
-const TREE_BRIGHT_HOLD_MS = 11000;
+const TREE_BRIGHT_HOLD_MS = 21000;
 const TREE_FADE_MS = 8500;
 const STANDBY_PROMPT_DELAY_MS = 5500;
 const ROUND_STANDBY_PROMPT_DELAY_MS = 2000;
@@ -253,17 +253,11 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
   const localX = ((stage.col - (screen.col - width / 2)) / width) * 100;
   const localY = ((stage.row - (screen.row - height / 2)) / height) * 100;
   const isGathering = progress < AUTO_FISH_GATHER_FRACTION;
-  const margin = isGathering || progress > 0.88 ? 170 : 34;
-
-  const a1EntryFocus = !isOverview && screen.id === 'A1' && isGathering
-    ? 1 - THREE.MathUtils.smoothstep(progress, 0.08, AUTO_FISH_GATHER_FRACTION)
-    : 0;
-  const visibleX = THREE.MathUtils.lerp(localX, 54, a1EntryFocus);
-  const visibleY = THREE.MathUtils.lerp(localY, 42, a1EntryFocus);
+  const margin = screen.id === 'A1' ? 420 : isGathering || progress > 0.88 ? 170 : 34;
 
   return {
-    x: visibleX,
-    y: visibleY,
+    x: localX,
+    y: localY,
     angle: stage.angle - (screen.rotate ?? 0),
     visible:
       (!isGathering || screen.id === 'A1') &&
@@ -274,93 +268,115 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
   };
 }
 
-const AUTO_FISH_INSTANCE_COUNT = 50;
+const AUTO_FISH_INSTANCE_COUNT = 72;
 const AUTO_FISH_TRAIL_COUNT = 108;
+const AUTO_FISH_GLOW_TRAIL_COUNT = 490;
+const AUTO_FISH_TRAIL_LENGTH_SCALE = 0.5;
+const AUTO_FISH_TRAIL_SIZE_SCALE = 1.28;
 
 function createFishTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 48;
+  canvas.width = 220;
+  canvas.height = 96;
   const ctx = canvas.getContext('2d');
   if (!ctx) return new THREE.CanvasTexture(canvas);
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.translate(64, 24);
+  ctx.translate(110, 48);
   ctx.globalCompositeOperation = 'source-over';
 
-  const aura = ctx.createRadialGradient(18, 0, 1, 18, 0, 48);
-  aura.addColorStop(0, 'rgba(236,254,255,0.82)');
-  aura.addColorStop(0.2, 'rgba(125,249,255,0.38)');
-  aura.addColorStop(0.56, 'rgba(34,211,238,0.12)');
-  aura.addColorStop(1, 'rgba(34,211,238,0)');
-  ctx.fillStyle = aura;
-  ctx.beginPath();
-  ctx.ellipse(12, 0, 50, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  [
+    { rx: 104, ry: 42, alpha: 0.011 },
+    { rx: 88, ry: 35, alpha: 0.018 },
+    { rx: 72, ry: 28, alpha: 0.029 },
+    { rx: 56, ry: 21, alpha: 0.044 },
+    { rx: 40, ry: 15, alpha: 0.066 },
+  ].forEach((glow) => {
+    const aura = ctx.createRadialGradient(10, 0, 1, 8, 0, glow.rx);
+    aura.addColorStop(0, `rgba(236,254,255,${glow.alpha * 2.2})`);
+    aura.addColorStop(0.16, `rgba(125,249,255,${glow.alpha * 1.6})`);
+    aura.addColorStop(0.36, `rgba(45,212,191,${glow.alpha * 0.92})`);
+    aura.addColorStop(0.62, `rgba(14,165,233,${glow.alpha * 0.34})`);
+    aura.addColorStop(0.84, `rgba(14,165,233,${glow.alpha * 0.08})`);
+    aura.addColorStop(1, 'rgba(14,165,233,0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.ellipse(7, 0, glow.rx, glow.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
 
-  const tailGlow = ctx.createRadialGradient(-30, 0, 2, -30, 0, 30);
-  tailGlow.addColorStop(0, 'rgba(34,211,238,0.72)');
-  tailGlow.addColorStop(0.45, 'rgba(6,182,212,0.32)');
-  tailGlow.addColorStop(1, 'rgba(8,145,178,0)');
-  ctx.fillStyle = tailGlow;
-  ctx.beginPath();
-  ctx.ellipse(-28, 0, 34, 13, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  const tail = ctx.createLinearGradient(-52, 0, -18, 0);
-  tail.addColorStop(0, 'rgba(14,165,233,0.82)');
-  tail.addColorStop(0.45, 'rgba(34,211,238,1)');
-  tail.addColorStop(1, 'rgba(125,249,255,0.88)');
+  const tail = ctx.createLinearGradient(-42, 0, -24, 0);
+  tail.addColorStop(0, 'rgba(8,145,178,1)');
+  tail.addColorStop(0.42, 'rgba(20,220,190,1)');
+  tail.addColorStop(1, 'rgba(103,252,255,1)');
   ctx.fillStyle = tail;
   ctx.beginPath();
-  ctx.moveTo(-28, 0);
-  ctx.lineTo(-54, -13);
-  ctx.lineTo(-46, 0);
-  ctx.lineTo(-54, 13);
+  ctx.moveTo(-24, 0);
+  ctx.lineTo(-42, -10);
+  ctx.lineTo(-36, 0);
+  ctx.lineTo(-42, 10);
   ctx.closePath();
   ctx.fill();
 
-  const body = ctx.createLinearGradient(-30, 0, 42, 0);
-  body.addColorStop(0, 'rgba(6,182,212,0.36)');
-  body.addColorStop(0.25, 'rgba(125,249,255,0.72)');
-  body.addColorStop(0.58, 'rgba(207,250,254,0.94)');
+  const body = ctx.createLinearGradient(-24, 0, 34, 0);
+  body.addColorStop(0, 'rgba(13,148,136,0.92)');
+  body.addColorStop(0.22, 'rgba(45,242,224,1)');
+  body.addColorStop(0.52, 'rgba(165,250,255,1)');
   body.addColorStop(0.84, 'rgba(255,255,255,1)');
-  body.addColorStop(1, 'rgba(125,249,255,0.48)');
+  body.addColorStop(1, 'rgba(255,255,255,1)');
   ctx.fillStyle = body;
   ctx.beginPath();
-  ctx.moveTo(-32, 0);
-  ctx.bezierCurveTo(-18, -12, 25, -12, 44, 0);
-  ctx.bezierCurveTo(24, 12, -18, 12, -32, 0);
+  ctx.moveTo(-26, 0);
+  ctx.bezierCurveTo(-14, -11, 20, -10, 36, 0);
+  ctx.bezierCurveTo(18, 11, -14, 11, -26, 0);
   ctx.closePath();
   ctx.fill();
 
-  const headLight = ctx.createRadialGradient(31, -2, 1, 31, -2, 19);
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-atop';
+
+  const bodySheen = ctx.createLinearGradient(-18, -7, 30, 4);
+  bodySheen.addColorStop(0, 'rgba(255,255,255,0)');
+  bodySheen.addColorStop(0.42, 'rgba(255,255,255,0.64)');
+  bodySheen.addColorStop(0.66, 'rgba(125,249,255,0.42)');
+  bodySheen.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = bodySheen;
+  ctx.beginPath();
+  ctx.ellipse(4, -2, 27, 4.2, -0.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  const headLight = ctx.createRadialGradient(28, -2, 1, 28, -2, 16);
   headLight.addColorStop(0, 'rgba(255,255,255,1)');
-  headLight.addColorStop(0.2, 'rgba(236,254,255,1)');
-  headLight.addColorStop(0.54, 'rgba(125,249,255,0.58)');
+  headLight.addColorStop(0.18, 'rgba(255,255,255,1)');
+  headLight.addColorStop(0.45, 'rgba(236,254,255,0.82)');
+  headLight.addColorStop(0.72, 'rgba(125,249,255,0.34)');
   headLight.addColorStop(1, 'rgba(125,249,255,0)');
   ctx.fillStyle = headLight;
   ctx.beginPath();
-  ctx.ellipse(28, -1, 22, 10, -0.05, 0, Math.PI * 2);
+  ctx.ellipse(28, -1, 18, 8.5, -0.04, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillStyle = 'rgba(255,255,255,0.98)';
   ctx.beginPath();
-  ctx.ellipse(35, -2, 7, 3.2, -0.08, 0, Math.PI * 2);
+  ctx.ellipse(30, -2, 5.4, 2.5, -0.08, 0, Math.PI * 2);
   ctx.fill();
 
-  const dorsal = ctx.createLinearGradient(-18, -8, 18, 8);
+  const dorsal = ctx.createLinearGradient(-17, -8, 18, 8);
   dorsal.addColorStop(0, 'rgba(8,47,73,0)');
-  dorsal.addColorStop(0.45, 'rgba(8,47,73,0.26)');
+  dorsal.addColorStop(0.5, 'rgba(8,47,73,0.2)');
   dorsal.addColorStop(1, 'rgba(8,47,73,0)');
   ctx.fillStyle = dorsal;
   ctx.beginPath();
-  ctx.ellipse(0, 0, 28, 5, -0.18, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 26, 4.6, -0.17, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 
   ctx.fillStyle = 'rgba(4,47,46,0.9)';
   ctx.beginPath();
-  ctx.arc(32, -3, 2.3, 0, Math.PI * 2);
+  ctx.arc(25, -3, 2.4, 0, Math.PI * 2);
   ctx.fill();
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -371,6 +387,8 @@ function createFishTexture() {
 function AutoFishSchoolScene({ progress, position, isOverview }: { progress: number; position: { x: number; y: number; angle: number }; isOverview: boolean }) {
   const fishRef = useRef<THREE.InstancedMesh>(null);
   const trailRef = useRef<THREE.Points>(null);
+  const glowTrailRef = useRef<THREE.Points>(null);
+  const glowTrailMaterialRef = useRef<THREE.ShaderMaterial>(null);
   const matrixObject = useMemo(() => new THREE.Object3D(), []);
   const fishTexture = useMemo(() => createFishTexture(), []);
   const { viewport } = useThree();
@@ -378,9 +396,11 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
     ring: Math.floor(index / 12),
     lane: index % 12,
     seed: index * 1.713,
-    scale: 0.82 + (index % 6) * 0.075,
+    scale: 0.98 + (index % 6) * 0.085,
+    roundness: index % 7 === 0 ? 1.62 : index % 5 === 0 ? 1.46 : index % 4 === 0 ? 1.24 : 1.08,
+    lengthBias: index % 7 === 0 ? 0.72 : index % 5 === 0 ? 0.82 : index % 4 === 0 ? 0.9 : 0.98,
     batchDelay: (index % 3) * 0.032,
-    laneOffset: (index % 3 - 1) * 0.2,
+    laneOffset: (index % 3 - 1) * 0.14,
   })), []);
   const trailData = useMemo(() => Array.from({ length: AUTO_FISH_TRAIL_COUNT }, (_, index) => ({
     lane: index % 27,
@@ -388,25 +408,55 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
     seed: index * 0.917,
     size: 0.018 + (index % 5) * 0.006,
   })), []);
+  const glowTrailData = useMemo(() => Array.from({ length: AUTO_FISH_GLOW_TRAIL_COUNT }, (_, index) => ({
+    lane: index % 49,
+    band: Math.floor(index / 49),
+    seed: index * 1.237,
+    size: 0.72 + (index % 9) * 0.12,
+  })), []);
   const trailPositions = useMemo(() => new Float32Array(AUTO_FISH_TRAIL_COUNT * 3), []);
+  const glowTrailPositions = useMemo(() => new Float32Array(AUTO_FISH_GLOW_TRAIL_COUNT * 3), []);
+  const glowTrailSizes = useMemo(() => new Float32Array(AUTO_FISH_GLOW_TRAIL_COUNT), []);
+  const glowTrailColors = useMemo(() => {
+    const palette = [
+      new THREE.Color("#ffffff"),
+      new THREE.Color("#ffffff"),
+      new THREE.Color("#ffffff"),
+      new THREE.Color("#f8feff"),
+      new THREE.Color("#ecfeff"),
+      new THREE.Color("#ffffff"),
+      new THREE.Color("#7df9ff"),
+      new THREE.Color("#fde68a"),
+    ];
+    const colors = new Float32Array(AUTO_FISH_GLOW_TRAIL_COUNT * 3);
+    Array.from({ length: AUTO_FISH_GLOW_TRAIL_COUNT }).forEach((_, index) => {
+      const color = palette[index % palette.length];
+      colors[index * 3] = color.r;
+      colors[index * 3 + 1] = color.g;
+      colors[index * 3 + 2] = color.b;
+    });
+    return colors;
+  }, []);
   const trailOpacity = THREE.MathUtils.smoothstep(progress, 0.01, 0.06) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
 
   useFrame(() => {
     const fishMesh = fishRef.current;
     const trail = trailRef.current;
+    const glowTrail = glowTrailRef.current;
     const entryOpacity = THREE.MathUtils.smoothstep(progress, 0, 0.045);
     const exitOpacity = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1);
     const opacity = entryOpacity * exitOpacity;
     const centerX = (position.x / 100 - 0.5) * viewport.width;
     const centerY = (0.5 - position.y / 100) * viewport.height;
-    const schoolScale = (isOverview ? 1.52 : 2.38) * Math.min(viewport.width / 14, viewport.height / 8);
+    const schoolScale = (isOverview ? 1.62 : 2.5) * Math.min(viewport.width / 14, viewport.height / 8);
     const contraction = 1 - THREE.MathUtils.smoothstep(Math.sin(progress * Math.PI * 4) * 0.5 + 0.5, 0.56, 1) * 0.18;
     const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
     const baseAngle = -position.angle * Math.PI / 180;
 
     if (fishMesh) {
+      fishMesh.renderOrder = 5;
       const material = fishMesh.material as THREE.MeshBasicMaterial;
-      material.opacity = opacity;
+      material.opacity = Math.min(1, opacity * 1.18);
       fishData.forEach((fish, index) => {
         const batchProgress = THREE.MathUtils.clamp((progress - fish.batchDelay) / (1 - fish.batchDelay), 0, 1);
         const presence = THREE.MathUtils.smoothstep(progress, fish.batchDelay, fish.batchDelay + 0.038) * exitOpacity;
@@ -418,16 +468,17 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
         }
 
         const theta = fish.lane * 0.58 + fish.ring * 1.24 + batchProgress * 9;
-        const curlX = Math.sin(theta + Math.sin(batchProgress * 6 + fish.seed) * 0.9) * (0.32 + fish.ring * 0.045);
-        const curlY = Math.cos(theta * 0.92 + batchProgress * 4.7) * (0.24 + fish.ring * 0.05);
-        const dart = Math.sin(batchProgress * 36 + fish.seed) * 0.12 + Math.cos(batchProgress * 28 + fish.lane * 0.7) * 0.08;
-        const localX = (-fish.ring * 0.34 + Math.cos(fish.lane * 0.64 + fish.ring * 1.31) * (0.78 - fish.ring * 0.025) + curlX + dart + fish.laneOffset) * schoolScale * contraction;
-        const localY = (Math.sin(fish.lane * 0.76 + fish.ring * 0.69) * (0.54 + fish.ring * 0.14) + Math.sin(batchProgress * 18 + fish.seed) * 0.22 + curlY + fish.laneOffset * 0.28) * schoolScale * vortexBreath;
+        const curlX = Math.sin(theta + Math.sin(batchProgress * 6 + fish.seed) * 0.9) * (0.23 + fish.ring * 0.035);
+        const curlY = Math.cos(theta * 0.92 + batchProgress * 4.7) * (0.18 + fish.ring * 0.04);
+        const dart = Math.sin(batchProgress * 36 + fish.seed) * 0.08 + Math.cos(batchProgress * 28 + fish.lane * 0.7) * 0.055;
+        const escortSpread = (fish.lane - 5.5) * 0.34 + (fish.ring - 1.5) * 0.18;
+        const localX = (escortSpread - fish.ring * 0.15 + Math.cos(fish.lane * 0.64 + fish.ring * 1.31) * (0.54 - fish.ring * 0.018) + curlX + dart + fish.laneOffset) * schoolScale * contraction;
+        const localY = (Math.sin(fish.lane * 0.76 + fish.ring * 0.69) * (0.5 + fish.ring * 0.11) + Math.sin(batchProgress * 18 + fish.seed) * 0.15 + curlY + fish.laneOffset * 0.18) * schoolScale * vortexBreath;
         const x = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
         const y = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
         const fishAngle = baseAngle + Math.sin(batchProgress * 18 + fish.seed) * 0.24 + (fish.lane % 3 - 1) * 0.08;
-        const length = 0.34 * fish.scale * schoolScale;
-        const height = 0.095 * fish.scale * schoolScale;
+        const length = 0.62 * fish.scale * fish.lengthBias * schoolScale;
+        const height = 0.24 * fish.scale * fish.roundness * schoolScale;
 
         matrixObject.position.set(x, y, 0);
         matrixObject.rotation.set(0, 0, fishAngle);
@@ -438,16 +489,46 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
       fishMesh.instanceMatrix.needsUpdate = true;
     }
 
+    if (glowTrail) {
+      glowTrail.renderOrder = 4;
+      const positions = glowTrail.geometry.attributes.position;
+      const sizes = glowTrail.geometry.attributes.size;
+      if (glowTrailMaterialRef.current) {
+        glowTrailMaterialRef.current.uniforms.uOpacity.value = Math.min(1, trailOpacity * 1.45);
+        glowTrailMaterialRef.current.uniforms.uDpr.value = Math.min(window.devicePixelRatio || 1, 2);
+      }
+      glowTrailData.forEach((dot, index) => {
+        const bandDepth = dot.band / 10;
+        const tailFalloff = THREE.MathUtils.clamp(1 - bandDepth * 0.72, 0.2, 1);
+        const laneSpread = (dot.lane - 24) / 24;
+        const flow = (progress * 5.2 + dot.seed) % 3.9;
+        const ribbon = Math.sin(progress * 18 + dot.seed) * 0.44 + Math.cos(dot.lane * 0.31 + progress * 13) * 0.26;
+        const localX = ((-flow * 0.98 - bandDepth * 1.08) * AUTO_FISH_TRAIL_LENGTH_SCALE + laneSpread * (1.3 + bandDepth * 0.48) + ribbon) * schoolScale;
+        const localY = (
+          Math.sin(dot.lane * 0.25 + progress * 16 + dot.seed) * (0.48 + bandDepth * 0.18) +
+          Math.cos(progress * 11 + dot.seed * 0.7) * 0.3 +
+          (dot.band % 3 - 1) * 0.18
+        ) * schoolScale;
+        glowTrailPositions[index * 3] = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
+        glowTrailPositions[index * 3 + 1] = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
+        glowTrailPositions[index * 3 + 2] = 0.02 + tailFalloff * 0.01;
+        glowTrailSizes[index] = (3.4 + dot.size * 2.2) * tailFalloff * (isOverview ? 0.95 : 1.18) * AUTO_FISH_TRAIL_SIZE_SCALE;
+      });
+      positions.needsUpdate = true;
+      sizes.needsUpdate = true;
+    }
+
     if (trail) {
+      trail.renderOrder = 1;
       const positions = trail.geometry.attributes.position;
       const material = trail.material as THREE.PointsMaterial;
-      material.opacity = trailOpacity;
-      material.size = 0.065 * (isOverview ? 0.92 : 1.22);
+      material.opacity = Math.min(1, trailOpacity * 1.32);
+      material.size = 0.078 * (isOverview ? 1 : 1.34) * AUTO_FISH_TRAIL_SIZE_SCALE;
       trailData.forEach((dot, index) => {
         const flow = (progress * 4.8 + dot.seed) % 2.3;
         const curlX = Math.sin(progress * 21 + dot.lane * 0.72 + dot.band * 1.9) * 0.38;
         const curlY = Math.cos(progress * 19 + dot.lane * 0.64 + dot.band * 1.5) * 0.28;
-        const localX = (-flow - dot.band * 0.36 + Math.sin(dot.seed + progress * 22) * 0.32 + curlX) * schoolScale;
+        const localX = ((-flow - dot.band * 0.36) * AUTO_FISH_TRAIL_LENGTH_SCALE + Math.sin(dot.seed + progress * 22) * 0.32 + curlX) * schoolScale;
         const localY = (Math.sin(dot.lane * 0.73 + dot.band * 1.2 + progress * 18) * (0.38 + dot.band * 0.09) + curlY) * schoolScale;
         trailPositions[index * 3] = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
         trailPositions[index * 3 + 1] = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
@@ -455,19 +536,61 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
       });
       positions.needsUpdate = true;
     }
+
   });
 
   return (
     <>
+      <points ref={glowTrailRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={AUTO_FISH_GLOW_TRAIL_COUNT} array={glowTrailPositions} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={AUTO_FISH_GLOW_TRAIL_COUNT} array={glowTrailColors} itemSize={3} />
+          <bufferAttribute attach="attributes-size" count={AUTO_FISH_GLOW_TRAIL_COUNT} array={glowTrailSizes} itemSize={1} />
+        </bufferGeometry>
+        <shaderMaterial
+          ref={glowTrailMaterialRef}
+          transparent
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          depthTest={false}
+          uniforms={{
+            uOpacity: { value: 0 },
+            uDpr: { value: 1 },
+          }}
+          vertexShader={`
+            attribute vec3 color;
+            attribute float size;
+            varying vec3 vColor;
+            void main() {
+              vColor = color;
+              vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+              gl_Position = projectionMatrix * mvPosition;
+              gl_PointSize = size;
+            }
+          `}
+          fragmentShader={`
+            uniform float uOpacity;
+            varying vec3 vColor;
+            void main() {
+              vec2 uv = gl_PointCoord - vec2(0.5);
+              float dist = length(uv);
+              float glow = smoothstep(0.5, 0.0, dist);
+              float core = smoothstep(0.18, 0.0, dist);
+              vec3 litColor = mix(vColor, vec3(1.0), core * 0.72);
+              gl_FragColor = vec4(litColor, glow * uOpacity);
+            }
+          `}
+        />
+      </points>
       <points ref={trailRef}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={AUTO_FISH_TRAIL_COUNT} array={trailPositions} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial color="#67e8f9" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} sizeAttenuation />
+        <pointsMaterial color="#ffffff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} depthTest={false} sizeAttenuation />
       </points>
       <instancedMesh ref={fishRef} args={[undefined, undefined, AUTO_FISH_INSTANCE_COUNT]}>
         <planeGeometry args={[1, 1]} />
-        <meshBasicMaterial map={fishTexture} transparent opacity={0} alphaTest={0.02} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+        <meshBasicMaterial map={fishTexture} transparent opacity={0} alphaTest={0.001} blending={THREE.AdditiveBlending} depthWrite={false} depthTest={false} side={THREE.DoubleSide} />
       </instancedMesh>
     </>
   );
@@ -1092,7 +1215,7 @@ export default function App() {
             treePhaseRef.current = 'bright';
           }
 
-          const brightHoldMs = autoTreeActiveRef.current ? 5500 : TREE_BRIGHT_HOLD_MS;
+          const brightHoldMs = autoTreeActiveRef.current ? 15500 : TREE_BRIGHT_HOLD_MS;
           if (treeBrightAtRef.current && Date.now() - treeBrightAtRef.current > brightHoldMs) {
             treeFadingRef.current = true;
             treePhaseRef.current = 'fading';
@@ -1506,22 +1629,31 @@ export default function App() {
     autoTimelineTimersRef.current.push(revealTimer);
 
     const screenIds = SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id);
-    const shuffledScreenIds = [...screenIds].sort(() => Math.random() - 0.5);
-    const firstWave = shuffledScreenIds.map((screen, index) => ({
-      t: 300 + index * (AUTO_FIREWORK_DURATION_MS * 0.42 / Math.max(1, shuffledScreenIds.length)),
-      screen,
-      kind: (['small', 'medium', 'large'] as FireworkBurstKind[])[index % 3],
-    }));
-    const extraBursts = Array.from({ length: 18 }, (_, index) => {
-      const screen = screenIds[Math.floor(Math.random() * screenIds.length)];
-      const kindPool: FireworkBurstKind[] = index % 7 === 0 ? ['large', 'large', 'medium'] : ['small', 'medium', 'large'];
-      return {
-        t: 1500 + Math.random() * (AUTO_FIREWORK_DURATION_MS - 1700),
-        screen,
-        kind: kindPool[Math.floor(Math.random() * kindPool.length)],
-      };
+    const randomBetween = (min: number, max: number) => min + Math.random() * (max - min);
+    const randomKind = (index: number): FireworkBurstKind => {
+      const kindPool: FireworkBurstKind[] = index % 5 === 0
+        ? ['medium', 'large', 'large']
+        : ['small', 'medium', 'large'];
+      return kindPool[Math.floor(Math.random() * kindPool.length)];
+    };
+    const perScreenPlans = screenIds.flatMap((screen) => {
+      const burstCount = Math.floor(randomBetween(3, 8));
+      const interval = randomBetween(1150, 3900);
+      const plans: { t: number; screen: string; kind: FireworkBurstKind }[] = [];
+      let t = randomBetween(260, 1900);
+
+      for (let index = 0; index < burstCount && t <= AUTO_FIREWORK_DURATION_MS - 700; index += 1) {
+        plans.push({
+          t,
+          screen,
+          kind: randomKind(index),
+        });
+        t += interval * randomBetween(0.72, 1.34);
+      }
+
+      return plans;
     });
-    const randomPlan = [...firstWave, ...extraBursts]
+    const randomPlan = perScreenPlans
       .sort((a, b) => a.t - b.t)
       .map(({ t, screen, kind }) => {
         const center = getScreenWorldPoint(screen);
