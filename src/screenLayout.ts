@@ -50,6 +50,15 @@ export const SCREEN_LAYOUT_ITEMS: ScreenLayoutItem[] = [
 
 export const SHOW_SCREEN_LAYOUT_ITEMS = [MASTER_SCREEN, ...SCREEN_LAYOUT_ITEMS];
 
+export const SHOW_SCREEN_TOPOLOGY = [
+  ['A1'],
+  ['B1', 'B2', 'B3', 'B4', 'B5', 'B6'],
+  ['C1', 'C2', 'C3', 'C4'],
+  ['D1', 'D2', 'D3'],
+  ['L1', 'E1', 'R1'],
+  ['L2', 'F1', 'R2'],
+];
+
 export const SCREEN_LAYOUT: Record<string, ScreenLayoutItem> = {
   MASTER: MASTER_SCREEN,
   A1: MASTER_SCREEN,

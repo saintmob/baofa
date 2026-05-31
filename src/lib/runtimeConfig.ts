@@ -102,7 +102,7 @@ function usesStandardPort(url: URL) {
 function isUsableHttpOrigin(value: string) {
   const url = parseUrl(value);
   if (!url || !['http:', 'https:'].includes(url.protocol)) return false;
-  if (isLocalRuntime()) return true;
+  if (isLocalRuntime()) return isLocalHost(url.hostname) || isLanHost(url.hostname);
   return !isLocalHost(url.hostname) && usesStandardPort(url);
 }
 
@@ -120,6 +120,13 @@ function chooseUrl(value: string | undefined, fallback: string, isUsable: (url: 
 
 function chooseTransport(value: unknown, fallback: ShowTransport): ShowTransport {
   return VALID_TRANSPORTS.has(value as ShowTransport) ? value as ShowTransport : fallback;
+}
+
+function chooseControlToken(storedValue: unknown, fallback: string) {
+  const envToken = String(env.VITE_CONTROL_TOKEN || '').trim();
+  if (envToken) return envToken;
+  const storedToken = String(storedValue || '').trim();
+  return storedToken ? storedToken : fallback;
 }
 
 export function loadShowRuntimeSettings(): ShowRuntimeSettings {
@@ -143,6 +150,7 @@ export function loadShowRuntimeSettings(): ShowRuntimeSettings {
       wsUrl: chooseUrl(stored.wsUrl, defaults.wsUrl, isUsableWebSocketEndpoint),
       firebaseDatabaseUrl: chooseUrl(stored.firebaseDatabaseUrl, defaults.firebaseDatabaseUrl, isUsableHttpOrigin),
       transport: chooseTransport(stored.transport, defaults.transport),
+      controlToken: chooseControlToken(stored.controlToken, defaults.controlToken),
     };
   } catch {
     return defaults;

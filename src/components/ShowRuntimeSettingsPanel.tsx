@@ -17,7 +17,12 @@ export function ShowRuntimeSettingsPanel({ status }: { status?: string }) {
   };
 
   return (
-    <div className="fixed bottom-6 left-6 z-50 flex max-w-[92vw] flex-col items-start gap-2 text-[11px]">
+    <div
+      className="fixed bottom-6 left-6 z-[70] flex max-w-[92vw] flex-col items-start gap-2 text-[11px]"
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+    >
       {open && (
         <section className="w-[360px] max-w-full rounded-2xl border border-emerald-400/20 bg-slate-950/95 p-4 text-emerald-50 shadow-2xl backdrop-blur">
           <div className="mb-3 flex items-start justify-between gap-3">
