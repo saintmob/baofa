@@ -129,13 +129,20 @@ function chooseControlToken(storedValue: unknown, fallback: string) {
   return storedToken ? storedToken : fallback;
 }
 
+function readUrlShowId() {
+  if (typeof window === 'undefined') return '';
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get('room') || params.get('showId') || '').trim();
+}
+
 export function loadShowRuntimeSettings(): ShowRuntimeSettings {
   const profile = baseDefaults();
+  const urlShowId = readUrlShowId();
   const defaults: ShowRuntimeSettings = {
     transport: chooseTransport(env.VITE_SHOW_TRANSPORT, profile.transport),
     backendUrl: chooseUrl(env.VITE_SHOW_BACKEND_URL, profile.backendUrl, isUsableHttpOrigin),
     wsUrl: chooseUrl(env.VITE_SHOW_WS_URL, profile.wsUrl, isUsableWebSocketEndpoint),
-    showId: String(env.VITE_SHOW_ID || profile.showId),
+    showId: urlShowId || String(env.VITE_SHOW_ID || profile.showId),
     controlToken: String(env.VITE_CONTROL_TOKEN || profile.controlToken),
     clientId: String(env.VITE_SHOW_CLIENT_ID || profile.clientId),
     firebaseDatabaseUrl: chooseUrl(env.VITE_FIREBASE_DATABASE_URL, profile.firebaseDatabaseUrl, isUsableHttpOrigin),
@@ -149,6 +156,7 @@ export function loadShowRuntimeSettings(): ShowRuntimeSettings {
       backendUrl: chooseUrl(stored.backendUrl, defaults.backendUrl, isUsableHttpOrigin),
       wsUrl: chooseUrl(stored.wsUrl, defaults.wsUrl, isUsableWebSocketEndpoint),
       firebaseDatabaseUrl: chooseUrl(stored.firebaseDatabaseUrl, defaults.firebaseDatabaseUrl, isUsableHttpOrigin),
+      showId: urlShowId || String(stored.showId || defaults.showId),
       transport: chooseTransport(stored.transport, defaults.transport),
       controlToken: chooseControlToken(stored.controlToken, defaults.controlToken),
     };

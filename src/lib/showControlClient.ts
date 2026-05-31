@@ -115,7 +115,7 @@ function createWebSocketClient(options: ClientOptions) {
   const connect = () => {
     if (closed) return;
     options.onStatus?.('connecting');
-    socket = new WebSocket(controlToken ? `${wsUrl}${wsUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(controlToken)}` : wsUrl);
+    socket = new WebSocket(withQuery(wsUrl, { room: showId, token: controlToken || undefined }));
 
     socket.addEventListener('open', () => {
       options.onStatus?.('connected');
@@ -179,7 +179,7 @@ function createWebSocketClient(options: ClientOptions) {
     async postState(patch: Record<string, unknown>) {
       const headers: Record<string, string> = { 'content-type': 'application/json' };
       if (controlToken) headers['x-control-token'] = controlToken;
-      await fetch(`${backendUrl}/api/modules/${options.module}/state`, {
+      await fetch(withQuery(`${backendUrl}/api/modules/${options.module}/state`, { room: showId }), {
         method: 'POST',
         headers,
         body: JSON.stringify({ source: options.clientId, patch }),
@@ -353,6 +353,14 @@ async function firebaseWrite(method: 'PUT' | 'PATCH', path: string, value: unkno
 
 function jsonUrl(path: string) {
   return `${databaseUrl}/${path}.json`;
+}
+
+function withQuery(url: string, params: Record<string, string | undefined>) {
+  const next = new URL(url);
+  for (const [key, value] of Object.entries(params)) {
+    if (value) next.searchParams.set(key, value);
+  }
+  return next.toString();
 }
 
 function makeStateModuleUpdates(module: ModuleName, patch: Record<string, unknown>) {

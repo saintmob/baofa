@@ -49,7 +49,7 @@ export async function fetchScreenState(signal?: AbortSignal): Promise<{
 async function fetchBackendState(signal?: AbortSignal) {
   const headers: Record<string, string> = {};
   if (controlToken) headers['x-control-token'] = controlToken;
-  const response = await fetch(`${SHOW_BACKEND_URL}/api/state`, { headers, signal });
+  const response = await fetch(withRoom(`${SHOW_BACKEND_URL}/api/state`), { headers, signal });
   if (!response.ok) throw new Error(`Show API state failed: ${response.status}`);
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw new Error(`Show API state returned ${contentType || 'non-json content'}`);
@@ -99,6 +99,12 @@ function isUsableWebSocketUrl() {
 
 function firebaseJsonUrl(path: string) {
   return `${databaseUrl}/${path}.json`;
+}
+
+function withRoom(url: string) {
+  const next = new URL(url);
+  if (showId) next.searchParams.set('room', showId);
+  return next.toString();
 }
 
 function safePath(value: string) {
