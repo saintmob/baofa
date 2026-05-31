@@ -1,6 +1,8 @@
 const env = (import.meta as any).env || {};
 const lanHost = String(env.VITE_LAN_HOST || '').trim();
 const RUNTIME_SETTINGS_KEY = 'vad.showRuntimeSettings.v1';
+const HOSTED_SHOW_BACKEND_URL = 'https://vad-26-show-control.saintmob.workers.dev';
+const HOSTED_SHOW_WS_URL = 'wss://vad-26-show-control.saintmob.workers.dev/ws';
 
 export const APP_PORT = 4303;
 
@@ -17,9 +19,9 @@ export type ShowRuntimeSettings = {
 };
 
 const HOSTED_DEFAULTS: ShowRuntimeSettings = {
-  transport: 'auto',
-  backendUrl: 'https://vad-26-api.vercel.app',
-  wsUrl: '',
+  transport: 'cloudflare',
+  backendUrl: HOSTED_SHOW_BACKEND_URL,
+  wsUrl: HOSTED_SHOW_WS_URL,
   showId: 'show-main',
   controlToken: '',
   clientId: '',
