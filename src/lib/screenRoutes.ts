@@ -115,3 +115,16 @@ export async function fetchScreenRoutes(signal?: AbortSignal): Promise<Record<st
   const state = await fetchScreenState(signal);
   return state.routes;
 }
+
+export function subscribeScreenState(onChange: () => void | Promise<void>) {
+  if (!shouldReadFirebaseState()) return () => undefined;
+  const stream = new EventSource(firebaseJsonUrl(`shows/${safePath(showId)}/state/modules/interaction`));
+  const notify = () => void onChange();
+  stream.addEventListener('open', notify);
+  stream.addEventListener('put', notify);
+  stream.addEventListener('patch', notify);
+  stream.addEventListener('error', () => {
+    // The existing polling loop remains the fallback if the Firebase stream drops.
+  });
+  return () => stream.close();
+}

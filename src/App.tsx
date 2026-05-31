@@ -11,7 +11,7 @@ import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from '.
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
 import { APP_PORT } from './lib/runtimeConfig';
 import { ShowRuntimeSettingsPanel } from './components/ShowRuntimeSettingsPanel';
-import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
+import { fetchScreenState, subscribeScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
 import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Route, Sparkles } from 'lucide-react';
 import {
@@ -1491,6 +1491,11 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [refreshScreenState]);
+
+  useEffect(() => {
+    if (!isKnownScreenId(routeScreenId)) return;
+    return subscribeScreenState(() => refreshScreenState());
+  }, [refreshScreenState, routeScreenId]);
 
   useEffect(() => {
     if (!isKnownScreenId(routeScreenId)) return;
