@@ -137,6 +137,16 @@ function readUrlShowId() {
   return String(params.get('room') || params.get('showId') || '').trim();
 }
 
+function isLegacyHostedBackendUrl(value: unknown) {
+  const url = parseUrl(String(value || '').trim());
+  return !isLocalRuntime() && url?.hostname === 'vad-26-api.vercel.app';
+}
+
+function isLegacyHostedWsUrl(value: unknown) {
+  const url = parseUrl(String(value || '').trim());
+  return !isLocalRuntime() && url?.hostname === 'vad-26-api.vercel.app';
+}
+
 export function loadShowRuntimeSettings(): ShowRuntimeSettings {
   const profile = baseDefaults();
   const urlShowId = readUrlShowId();
@@ -152,11 +162,13 @@ export function loadShowRuntimeSettings(): ShowRuntimeSettings {
   if (typeof window === 'undefined') return defaults;
   try {
     const stored = JSON.parse(window.localStorage.getItem(RUNTIME_SETTINGS_KEY) || '{}') as Partial<ShowRuntimeSettings>;
+    const storedBackendUrl = isLegacyHostedBackendUrl(stored.backendUrl) ? defaults.backendUrl : stored.backendUrl;
+    const storedWsUrl = isLegacyHostedWsUrl(stored.wsUrl) ? defaults.wsUrl : stored.wsUrl;
     return {
       ...defaults,
       ...stored,
-      backendUrl: chooseUrl(stored.backendUrl, defaults.backendUrl, isUsableHttpOrigin),
-      wsUrl: chooseUrl(stored.wsUrl, defaults.wsUrl, isUsableWebSocketEndpoint),
+      backendUrl: chooseUrl(storedBackendUrl, defaults.backendUrl, isUsableHttpOrigin),
+      wsUrl: chooseUrl(storedWsUrl, defaults.wsUrl, isUsableWebSocketEndpoint),
       firebaseDatabaseUrl: chooseUrl(stored.firebaseDatabaseUrl, defaults.firebaseDatabaseUrl, isUsableHttpOrigin),
       showId: urlShowId || String(stored.showId || defaults.showId),
       transport: chooseTransport(stored.transport, defaults.transport),
