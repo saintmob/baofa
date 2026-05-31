@@ -2564,17 +2564,22 @@ export default function App() {
               </div>
 
               <div className="mt-4 grid grid-cols-4 gap-2 text-[9px] font-mono uppercase tracking-[0.14em] max-[720px]:grid-cols-2">
-                <div className={`rounded border px-3 py-2 ${showControlStatus === 'connected' ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100/80' : 'border-white/10 bg-white/[0.04] text-white/45'}`}>
-                  4300 {showControlStatus}
+                <div className={`px-1 py-2 ${showControlStatus === 'connected' ? 'text-emerald-100/80' : 'text-white/42'}`}>
+                  <span className="text-white/30">4300</span> <span>{showControlStatus}</span>
                 </div>
-                <div className={`rounded border px-3 py-2 ${debugEnabled ? 'border-amber-300/25 bg-amber-300/10 text-amber-100/80' : 'border-white/10 bg-white/[0.04] text-white/45'}`}>
+                <button
+                  type="button"
+                  className={`rounded border px-3 py-2 text-left transition ${webglDebugOpen ? 'border-amber-300/55 bg-amber-300/15 text-amber-100' : 'border-amber-300/25 bg-amber-300/10 text-amber-100/75 hover:border-amber-300/45 hover:bg-amber-300/14'}`}
+                  onClick={() => setWebglDebugOpen((value) => !value)}
+                  aria-expanded={webglDebugOpen}
+                >
                   Debug {debugEnabled ? 'visible' : 'hidden'}
+                </button>
+                <div className="px-1 py-2 text-white/50">
+                  <span className="text-white/30">Mode</span> <span>{visualMode}</span>
                 </div>
-                <div className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-white/55">
-                  Mode {visualMode}
-                </div>
-                <div className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-white/55">
-                  Fish {autoFishActive ? 'running' : 'idle'}
+                <div className="px-1 py-2 text-white/50">
+                  <span className="text-white/30">Fish</span> <span>{autoFishActive ? 'running' : 'idle'}</span>
                 </div>
               </div>
 
@@ -2786,49 +2791,47 @@ export default function App() {
       {shouldShowMenu && <ShowRuntimeSettingsPanel status={showControlStatus} />}
 
       <AnimatePresence>
-        {debugEnabled && (
+        {debugEnabled && webglDebugOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className={`fixed ${shouldShowMenu ? 'bottom-20' : 'bottom-6'} left-6 z-[70] ${webglDebugOpen ? 'w-[280px]' : 'w-auto'} max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/65 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 backdrop-blur-xl`}
+            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            className="fixed bottom-6 right-6 z-[70] w-[280px] max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/70 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 shadow-2xl backdrop-blur-xl"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <button
               type="button"
-              className={`flex w-full items-center justify-between gap-3 text-left text-amber-100/90 ${webglDebugOpen ? 'p-4 pb-3' : 'px-4 py-2.5'}`}
-              onClick={() => setWebglDebugOpen((value) => !value)}
-              aria-expanded={webglDebugOpen}
+              className="flex w-full items-center justify-between gap-3 p-4 pb-3 text-left text-amber-100/90"
+              onClick={() => setWebglDebugOpen(false)}
+              aria-label="Close WebGL debug"
             >
               <span className="flex items-center gap-2">
                 <Activity size={14} />
-                <span>{webglDebugOpen ? 'WebGL Debug / 调试' : 'Debug visible / 调试可见'}</span>
+                <span>WebGL Debug / 调试</span>
               </span>
               <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
-                {webglDebugOpen ? 'Close' : 'Open'}
+                Close
               </span>
             </button>
 
-            {webglDebugOpen && (
-              <div className="px-4 pb-4">
-                {webglStats ? (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                    <span>FPS</span><span className="text-right text-cyan-100">{webglStats.fps}</span>
-                    <span>Frame</span><span className="text-right text-cyan-100">{webglStats.frameMs}ms</span>
-                    <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
-                    <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
-                    <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
-                    <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
-                    <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
-                    <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
-                    <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
-                    <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
-                  </div>
-                ) : (
-                  <div className="text-white/35">Collecting render stats / 正在采样</div>
-                )}
-              </div>
-            )}
+            <div className="px-4 pb-4">
+              {webglStats ? (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>FPS</span><span className="text-right text-cyan-100">{webglStats.fps}</span>
+                  <span>Frame</span><span className="text-right text-cyan-100">{webglStats.frameMs}ms</span>
+                  <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
+                  <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
+                  <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
+                  <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
+                  <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
+                  <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
+                  <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
+                  <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
+                </div>
+              ) : (
+                <div className="text-white/35">Collecting render stats / 正在采样</div>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
