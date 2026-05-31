@@ -9,15 +9,16 @@ import { ParticleScene } from './components/Visuals/ParticleScene';
 import * as THREE from 'three';
 import { db, handleFirestoreError, isFirebaseConfigured, OperationType } from './lib/firebase';
 import { createShowControlClient, type ControlCommand } from './lib/showControlClient';
-import { APP_PORT, BAOFA_NATIVE_URL } from './lib/runtimeConfig';
+import { APP_PORT } from './lib/runtimeConfig';
 import { ShowRuntimeSettingsPanel } from './components/ShowRuntimeSettingsPanel';
 import { fetchScreenState, type ScreenPresentation, type ScreenRoute } from './lib/screenRoutes';
 import { doc, getDocFromServer, onSnapshot, setDoc } from 'firebase/firestore';
-import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Music2, Route, Sparkles, Volume2, VolumeX } from 'lucide-react';
+import { Activity, Camera, CameraOff, ExternalLink, LayoutGrid, MonitorCog, Route, Sparkles } from 'lucide-react';
 import {
   DEFAULT_SCREEN_ID,
   MASTER_SCREEN,
   SCREEN_LAYOUT_ITEMS,
+  SHOW_SCREEN_TOPOLOGY,
   SHOW_SCREEN_LAYOUT_ITEMS,
   STAGE_BOUNDS,
   getNearestScreenId,
@@ -148,7 +149,10 @@ const AUTO_FISH_DURATION_MS = 36000;
 const AUTO_FISH_GATHER_FRACTION = 0.2;
 const AUTO_END_BLACKOUT_MS = 3000;
 const AUTO_MUSIC_PLAYBACK_RATE = 1;
-const AUTO_FIREWORK_DURATION_MS = 20000;
+const AUTO_FIREWORK_REVEAL_MS = 4600;
+const AUTO_FIREWORK_PRELUDE_MS = 3800;
+const AUTO_FIREWORK_WARNING_MS = 160;
+const AUTO_FIREWORK_DURATION_MS = 34000;
 const STANDBY_WAKE_GROUPS = ['A', 'B', 'C', 'D', 'E', 'F', 'L', 'R'] as const;
 const STANDBY_WAKE_STEP_MS = 520;
 const STANDBY_WAKE_HOLD_MS = 2500;
@@ -253,7 +257,7 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
   const localX = ((stage.col - (screen.col - width / 2)) / width) * 100;
   const localY = ((stage.row - (screen.row - height / 2)) / height) * 100;
   const isGathering = progress < AUTO_FISH_GATHER_FRACTION;
-  const margin = screen.id === 'A1' ? 420 : isGathering || progress > 0.88 ? 170 : 34;
+  const margin = screen.id === 'A1' ? 260 : isGathering || progress > 0.88 ? 220 : 145;
 
   return {
     x: localX,
@@ -265,6 +269,51 @@ function getFishPosition(progress: number, screenId: string, isOverview: boolean
       localX <= 100 + margin &&
       localY >= -margin &&
       localY <= 100 + margin,
+  };
+}
+
+function getStagePositionForScreen(stage: { col: number; row: number; angle: number }, screenId: string, isOverview: boolean) {
+  if (isOverview) {
+    return {
+      x: (stage.col / STAGE_BOUNDS.width) * 100,
+      y: (stage.row / STAGE_BOUNDS.height) * 100,
+      angle: stage.angle,
+      visible: true,
+    };
+  }
+
+  const screen = getScreenLayout(screenId);
+  const width = screen.width ?? 0.78;
+  const height = screen.height ?? 0.52;
+  const localX = ((stage.col - (screen.col - width / 2)) / width) * 100;
+  const localY = ((stage.row - (screen.row - height / 2)) / height) * 100;
+  const margin = screen.id === 'A1' ? 90 : 130;
+
+  return {
+    x: localX,
+    y: localY,
+    angle: stage.angle - (screen.rotate ?? 0),
+    visible: localX >= -margin && localX <= 100 + margin && localY >= -margin && localY <= 100 + margin,
+  };
+}
+
+function getFireworkPreludeStagePosition(progress: number) {
+  const clamped = THREE.MathUtils.clamp(progress, 0, 1);
+  const route = ['F1', 'E1', 'D2', 'B3', 'A1'].map((screen) => getFishRoutePoint(screen));
+  const segmentCount = route.length - 1;
+  const scaled = clamped * segmentCount;
+  const index = Math.min(segmentCount - 1, Math.floor(scaled));
+  const local = scaled - index;
+  const eased = local < 0.5 ? 2 * local * local : 1 - Math.pow(-2 * local + 2, 2) / 2;
+  const from = route[index];
+  const to = route[index + 1];
+  const dx = to.col - from.col;
+  const dy = to.row - from.row;
+
+  return {
+    col: THREE.MathUtils.lerp(from.col, to.col, eased),
+    row: THREE.MathUtils.lerp(from.row, to.row, eased) - Math.sin(clamped * Math.PI) * 0.28,
+    angle: Math.atan2(dy, dx) * 180 / Math.PI,
   };
 }
 
@@ -448,7 +497,7 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
     const opacity = entryOpacity * exitOpacity;
     const centerX = (position.x / 100 - 0.5) * viewport.width;
     const centerY = (0.5 - position.y / 100) * viewport.height;
-    const schoolScale = (isOverview ? 1.62 : 2.5) * Math.min(viewport.width / 14, viewport.height / 8);
+    const schoolScale = (isOverview ? 1.62 : 4.1) * Math.min(viewport.width / 14, viewport.height / 8);
     const contraction = 1 - THREE.MathUtils.smoothstep(Math.sin(progress * Math.PI * 4) * 0.5 + 0.5, 0.56, 1) * 0.18;
     const vortexBreath = 0.82 + Math.sin(progress * Math.PI * 6) * 0.18;
     const baseAngle = -position.angle * Math.PI / 180;
@@ -512,7 +561,7 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
         glowTrailPositions[index * 3] = centerX + Math.cos(baseAngle) * localX - Math.sin(baseAngle) * localY;
         glowTrailPositions[index * 3 + 1] = centerY + Math.sin(baseAngle) * localX + Math.cos(baseAngle) * localY;
         glowTrailPositions[index * 3 + 2] = 0.02 + tailFalloff * 0.01;
-        glowTrailSizes[index] = (3.4 + dot.size * 2.2) * tailFalloff * (isOverview ? 0.95 : 1.18) * AUTO_FISH_TRAIL_SIZE_SCALE;
+        glowTrailSizes[index] = (3.4 + dot.size * 2.2) * tailFalloff * (isOverview ? 0.95 : 1.34) * AUTO_FISH_TRAIL_SIZE_SCALE;
       });
       positions.needsUpdate = true;
       sizes.needsUpdate = true;
@@ -523,7 +572,7 @@ function AutoFishSchoolScene({ progress, position, isOverview }: { progress: num
       const positions = trail.geometry.attributes.position;
       const material = trail.material as THREE.PointsMaterial;
       material.opacity = Math.min(1, trailOpacity * 1.32);
-      material.size = 0.078 * (isOverview ? 1 : 1.34) * AUTO_FISH_TRAIL_SIZE_SCALE;
+      material.size = 0.078 * (isOverview ? 1 : 1.48) * AUTO_FISH_TRAIL_SIZE_SCALE;
       trailData.forEach((dot, index) => {
         const flow = (progress * 4.8 + dot.seed) % 2.3;
         const curlX = Math.sin(progress * 21 + dot.lane * 0.72 + dot.band * 1.9) * 0.38;
@@ -613,6 +662,63 @@ function AutoFishSchool({ active, progress, screenId, isOverview }: { active: bo
       >
         <AutoFishSchoolScene progress={progress} position={position} isOverview={isOverview} />
       </Canvas>
+    </div>
+  );
+}
+
+function FireworkPrelude({ active, startedAt, screenId, isOverview }: { active: boolean; startedAt: number | null; screenId: string; isOverview: boolean }) {
+  const [now, setNow] = useState(() => performance.now());
+
+  useEffect(() => {
+    if (!active) return;
+    let frame = 0;
+    const tick = () => {
+      setNow(performance.now());
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active]);
+
+  if (!active || startedAt === null) return null;
+
+  const progress = THREE.MathUtils.clamp((now - startedAt) / AUTO_FIREWORK_PRELUDE_MS, 0, 1);
+  const stage = getFireworkPreludeStagePosition(progress);
+  const position = getStagePositionForScreen(stage, screenId, isOverview);
+  if (!position.visible) return null;
+
+  const scale = isOverview ? 0.74 : 1.22;
+  const opacity = THREE.MathUtils.smoothstep(progress, 0, 0.08) * (1 - THREE.MathUtils.smoothstep(progress, 0.9, 1));
+
+  return (
+    <div className="fixed inset-0 z-[35] pointer-events-none overflow-hidden" data-firework-prelude>
+      <div
+        className="absolute"
+        style={{
+          left: `${position.x}%`,
+          top: `${position.y}%`,
+          width: `${Math.round(220 * scale)}px`,
+          height: `${Math.round(20 * scale)}px`,
+          opacity,
+          transform: `translate(-50%, -50%) rotate(${position.angle}deg)`,
+          transformOrigin: '50% 50%',
+        }}
+      >
+        <div className="absolute right-0 top-1/2 h-[3px] w-full -translate-y-1/2 rounded-full bg-gradient-to-l from-white via-cyan-100 to-transparent shadow-[0_0_24px_rgba(125,249,255,0.85)]" />
+        <div className="absolute right-0 top-1/2 h-[12px] w-[42px] -translate-y-1/2 rounded-full bg-white shadow-[0_0_24px_rgba(255,255,255,0.95),0_0_52px_rgba(34,211,238,0.7)]" />
+        <div className="absolute right-[18px] top-1/2 h-[28px] w-[86px] -translate-y-1/2 rounded-full bg-cyan-200/35 blur-md" />
+      </div>
+      {progress > 0.82 && (
+        <div
+          className="absolute h-[180px] w-[180px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/40 bg-cyan-100/10 shadow-[0_0_80px_rgba(255,255,255,0.75),0_0_140px_rgba(34,211,238,0.35)]"
+          style={{
+            left: `${position.x}%`,
+            top: `${position.y}%`,
+            opacity: THREE.MathUtils.smoothstep(progress, 0.82, 0.94) * (1 - THREE.MathUtils.smoothstep(progress, 0.96, 1)),
+            transform: `translate(-50%, -50%) scale(${0.3 + THREE.MathUtils.smoothstep(progress, 0.82, 1) * 1.8})`,
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -729,7 +835,7 @@ function AutoStandbyWakeOverlay({
 
 function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) {
   const { gl, size } = useThree();
-  const lastSampleRef = useRef(performance.now());
+  const lastStatsRef = useRef(performance.now());
   const frameCountRef = useRef(0);
   const frameMsRef = useRef(0);
 
@@ -749,9 +855,9 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
     frameMsRef.current += delta * 1000;
 
     const now = performance.now();
-    if (now - lastSampleRef.current < 500) return;
+    if (now - lastStatsRef.current < 500) return;
 
-    const elapsed = now - lastSampleRef.current;
+    const elapsed = now - lastStatsRef.current;
     const frames = frameCountRef.current;
     const info = gl.info;
 
@@ -771,7 +877,7 @@ function WebGLDebugProbe({ onStats }: { onStats: (stats: WebGLStats) => void }) 
     gl.info.reset();
     frameCountRef.current = 0;
     frameMsRef.current = 0;
-    lastSampleRef.current = now;
+    lastStatsRef.current = now;
   });
 
   return null;
@@ -783,8 +889,6 @@ export default function App() {
   const isLocalPreview = ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.port === String(APP_PORT);
   const {
     isStarted,
-    addRandomSampleLayer,
-    triggerScaleNote,
     triggerFireworkBurst,
     fadeToSingleLayer,
     updateTreeLayers,
@@ -795,8 +899,6 @@ export default function App() {
     setMusicEvolution,
     evolution,
     getAudioData,
-    useSampleLibrary,
-    setUseSampleLibrary
   } = useAudio();
   const { isHandOpen, openHandCount, hasHandDetected, isCameraActive, cameraError, startCamera, stopCamera } = useHandTracking();
   const [audioData, setAudioData] = useState(new Float32Array(1024));
@@ -818,7 +920,9 @@ export default function App() {
   const [standbyWakeKey, setStandbyWakeKey] = useState(0);
   const [autoFishActive, setAutoFishActive] = useState(false);
   const [autoFishProgress, setAutoFishProgress] = useState(0);
+  const [fireworkPreludeStartedAt, setFireworkPreludeStartedAt] = useState<number | null>(null);
   const [showScreenPanel, setShowScreenPanel] = useState(() => isLocalPreview);
+  const [webglDebugOpen, setWebglDebugOpen] = useState(false);
   const [treeGrowth, setTreeGrowth] = useState(0);
   const [gestureActive, setGestureActive] = useState(false);
   const [treeTriggered, setTreeTriggered] = useState(false);
@@ -830,15 +934,13 @@ export default function App() {
   const [screenPulse, setScreenPulse] = useState<{ source: string; timestamp: number } | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'error' | 'connecting'>('connecting');
   const [showControlStatus, setShowControlStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
-  const [showWebGLDebug, setShowWebGLDebug] = useState(false);
-  const [hideForcedWebGLDebug, setHideForcedWebGLDebug] = useState(false);
   const [webglStats, setWebglStats] = useState<WebGLStats | null>(null);
   const [screenRoute, setScreenRoute] = useState<ScreenRoute | null>(null);
   const [screenRoutes, setScreenRoutes] = useState<Record<string, ScreenRoute>>({});
   const [screenPresentation, setScreenPresentation] = useState<ScreenPresentation>({
     autoRedirect: true,
-    showDebug: isLocalPreview,
-    showMenu: isLocalPreview,
+    showDebug: true,
+    showMenu: true,
   });
   const [screenRouteError, setScreenRouteError] = useState('');
   const intensityRef = useRef(0.08);
@@ -867,6 +969,7 @@ export default function App() {
   const autoFishStartedAtRef = useRef<number | null>(null);
   const standbyWakeTimerRef = useRef<number | null>(null);
   const staleTreeResetRef = useRef(false);
+  const treeIdleAudioStoppedRef = useRef(true);
   const evolutionRef = useRef(evolution);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const requestRef = useRef<number>(null);
@@ -876,7 +979,6 @@ export default function App() {
     showControlClientIdRef.current = createShowControlClientId(screenId);
   }
   const showControlCommandRef = useRef<(command: ControlCommand) => void>(() => undefined);
-  const useSampleLibraryRef = useRef(useSampleLibrary);
   const refreshScreenState = useCallback(async (signal?: AbortSignal) => {
     try {
       const { routes, presentation } = await fetchScreenState(signal);
@@ -889,13 +991,6 @@ export default function App() {
       setScreenRouteError(error instanceof Error ? error.message : String(error));
     }
   }, [routeScreenId]);
-
-  useEffect(() => {
-    useSampleLibraryRef.current = useSampleLibrary;
-    if (!useSampleLibrary) {
-      stopAllLayers();
-    }
-  }, [stopAllLayers, useSampleLibrary]);
 
   const checkConnection = useCallback(async () => {
     if (!db) {
@@ -989,6 +1084,40 @@ export default function App() {
 
         if (ignoreRemoteTreeState) return;
 
+        const remoteTreeReset = data.treeGrowth <= 0.001 && remoteTreePhase === 'idle' && (!data.visualMode || data.visualMode === 'tree');
+        if (remoteTreeReset) {
+          staleTreeResetRef.current = false;
+          gestureProgressRef.current = 0;
+          gestureCompletedRef.current = false;
+          gestureRoundLockedRef.current = false;
+          gestureNeedsReleaseRef.current = false;
+          gestureInputArmedRef.current = false;
+          treeGrowthRef.current = 0;
+          treeTriggeredRef.current = false;
+          treeCompletedAtRef.current = null;
+          treeBrightAtRef.current = null;
+          treeFadingRef.current = false;
+          treePhaseRef.current = 'idle';
+          treeControllerRef.current = false;
+          autoTreeActiveRef.current = false;
+          intensityRef.current = typeof data.intensity === 'number' ? data.intensity : 0.08;
+          evolutionRef.current = 0;
+          setTreeGrowth(0);
+          setTreeTriggered(false);
+          setGestureActive(false);
+          setGestureProgress(0);
+          setShowGestureProgress(false);
+          setGestureStartPending(false);
+          setGestureRoundLocked(false);
+          setStandbyPromptReady(true);
+          setMusicEvolution(0);
+          setInteractionPoint(null);
+          setScreenPulse(null);
+          stopAllLayers();
+          treeIdleAudioStoppedRef.current = true;
+          if (!data.mode || data.mode === 'idle') setMode('idle');
+        }
+
         staleTreeResetRef.current = data.treeGrowth <= 0.01 ? false : staleTreeResetRef.current;
         treeGrowthRef.current = data.treeGrowth;
         setTreeGrowth(data.treeGrowth);
@@ -1011,6 +1140,17 @@ export default function App() {
         const source = isKnownScreenId(data.screenPulse.source) ? data.screenPulse.source : DEFAULT_SCREEN_ID;
         setScreenPulse({ source, timestamp: data.screenPulse.timestamp });
       }
+      if (data.baofaFishState === 'running') {
+        if (autoFishStartedAtRef.current === null) {
+          autoFishStartedAtRef.current = performance.now();
+          setAutoFishProgress(0);
+        }
+        setAutoFishActive(true);
+      } else if (data.baofaFishState === 'idle') {
+        autoFishStartedAtRef.current = null;
+        setAutoFishProgress(0);
+        setAutoFishActive(false);
+      }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'global/state');
     });
@@ -1032,10 +1172,26 @@ export default function App() {
     autoTimelineTimersRef.current = [];
     autoTreeActiveRef.current = false;
     autoFireworkActiveRef.current = false;
-    autoFishStartedAtRef.current = null;
-    setAutoFishActive(false);
-    setAutoFishProgress(0);
+    setFireworkPreludeStartedAt(null);
   }, []);
+
+  const startFishRun = useCallback((publish = true) => {
+    autoFishStartedAtRef.current = performance.now();
+    setAutoFishProgress(0);
+    setAutoFishActive(true);
+    if (publish) {
+      syncToFirebase({ baofaFishState: 'running' });
+    }
+  }, [syncToFirebase]);
+
+  const stopFishRun = useCallback((publish = true) => {
+    autoFishStartedAtRef.current = null;
+    setAutoFishProgress(0);
+    setAutoFishActive(false);
+    if (publish) {
+      syncToFirebase({ baofaFishState: 'idle' });
+    }
+  }, [syncToFirebase]);
 
   const stopStandbyWake = useCallback(() => {
     if (standbyWakeTimerRef.current) {
@@ -1248,15 +1404,31 @@ export default function App() {
       if (nextProgress >= 1) {
         autoFishStartedAtRef.current = null;
         setAutoFishActive(false);
+        syncToFirebase({ baofaFishState: 'idle' });
       }
     }
 
     if (soundEnabled && audioAutoStartAllowedRef.current && visualMode === 'tree' && !treeControllerRef.current) {
-      updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
+      const treeHasActiveSound =
+        treeTriggeredRef.current ||
+        treeGrowthRef.current > 0.001 ||
+        evolutionRef.current > 0.001 ||
+        mode !== 'idle';
+      if (!treeHasActiveSound) {
+        if (!treeIdleAudioStoppedRef.current) {
+          stopAllLayers();
+          treeIdleAudioStoppedRef.current = true;
+        }
+      } else {
+        treeIdleAudioStoppedRef.current = false;
+        updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
+      }
+    } else if (visualMode !== 'tree') {
+      treeIdleAudioStoppedRef.current = true;
     }
 
     requestRef.current = requestAnimationFrame(animate);
-  }, [fadeToSingleLayer, fadeTreeMusic, getAudioData, hasHandDetected, isCameraActive, isHandOpen, openHandCount, scheduleStandbyPrompt, setMusicEvolution, soundEnabled, startGestureGrowth, stopAllLayers, syncToFirebase, treeControlMode, updateTreeLayers, visualMode]);
+  }, [fadeToSingleLayer, fadeTreeMusic, getAudioData, hasHandDetected, isCameraActive, isHandOpen, mode, openHandCount, scheduleStandbyPrompt, setMusicEvolution, soundEnabled, startGestureGrowth, stopAllLayers, syncToFirebase, treeControlMode, updateTreeLayers, visualMode]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(animate);
@@ -1344,8 +1516,8 @@ export default function App() {
     evolutionRef.current = 0;
   }, [setMusicEvolution, stopAllLayers, visualMode]);
 
-  const resetTreeGrowth = (allowAudioStart = true) => {
-    const shouldRestartAuto = treeControlMode === 'auto';
+  const resetTreeGrowth = (allowAudioStart = true, restartAuto = false) => {
+    const shouldRestartAuto = restartAuto && treeControlMode === 'auto';
     clearAutoTimeline();
     stopStandbyWake();
     if (!shouldRestartAuto) {
@@ -1385,8 +1557,21 @@ export default function App() {
     setIntensity(0.08);
     setMusicEvolution(0);
     stopAllLayers();
+    treeIdleAudioStoppedRef.current = true;
     setMode('idle');
-    syncToFirebase({ treeGrowth: 0, treePhase: 'idle', gestureActive: false, intensity: 0.08, evolution: 0, mode: 'idle' });
+    setVisualMode('tree');
+    setFireworkControlMode('manual');
+    setFireworkState('standby');
+    syncToFirebase({
+      treeGrowth: 0,
+      treePhase: 'idle',
+      gestureActive: false,
+      intensity: 0.08,
+      evolution: 0,
+      mode: 'idle',
+      visualMode: 'tree',
+      fireworkState: 'standby',
+    });
     if (shouldRestartAuto) {
       window.setTimeout(() => {
         void startAutoTreeShow(allowAudioStart);
@@ -1401,10 +1586,14 @@ export default function App() {
     setVisualMode('tree');
     setMode(nextMode);
     if (nextMode !== 'idle') {
+      treeIdleAudioStoppedRef.current = false;
       treeTriggeredRef.current = true;
       treeGrowthRef.current = Math.max(treeGrowthRef.current, nextMode === 'climax' ? 0.82 : 0.24);
       setTreeTriggered(true);
       setTreeGrowth(treeGrowthRef.current);
+    } else {
+      treeIdleAudioStoppedRef.current = true;
+      stopAllLayers();
     }
     syncToFirebase({
       mode: nextMode,
@@ -1463,34 +1652,6 @@ export default function App() {
     setIsMaster(false);
     window.location.assign(route.url);
   }, [isOverview, screenId, screenRoutes]);
-
-  const triggerAutoPulse = useCallback((sourceScreen: string, power: number) => {
-    const point = getScreenWorldPoint(sourceScreen);
-    const timestamp = Date.now();
-    const nextIntensity = Math.min(1, Math.max(intensityRef.current, 0.28 + power * 0.58));
-    const nextEvolution = Math.min(0.52, evolutionRef.current + 0.028 + power * 0.022);
-
-    intensityRef.current = nextIntensity;
-    evolutionRef.current = nextEvolution;
-    setIntensity(nextIntensity);
-    setMusicEvolution(nextEvolution);
-    setInteractionPoint(point);
-    setScreenPulse({ source: sourceScreen, timestamp });
-    setMode('interaction');
-    window.setTimeout(() => {
-      if (!autoTreeActiveRef.current) {
-        setInteractionPoint(null);
-        setMode('idle');
-      }
-    }, 1250);
-    syncToFirebase({
-      lastInteraction: { x: point.x, y: point.y, z: point.z, timestamp },
-      screenPulse: { source: sourceScreen, timestamp },
-      intensity: nextIntensity,
-      evolution: nextEvolution,
-      mode: 'interaction',
-    });
-  }, [setMusicEvolution, syncToFirebase]);
 
   const triggerFireworkAt = useCallback(async (
     point: THREE.Vector3,
@@ -1611,10 +1772,10 @@ export default function App() {
     setMode('idle');
     setAutoBlackout(true);
     setAutoSceneOpacity(0);
-    setAutoFishActive(false);
-    setAutoFishProgress(0);
-    autoFishStartedAtRef.current = null;
     stopAllLayers();
+    treeIdleAudioStoppedRef.current = true;
+    const preludeStartedAt = performance.now();
+    setFireworkPreludeStartedAt(preludeStartedAt);
 
     if (soundEnabled && allowAudioStart) {
       await startAudio().catch(() => undefined);
@@ -1627,6 +1788,31 @@ export default function App() {
       setAutoSceneOpacity(1);
     }, 260);
     autoTimelineTimersRef.current.push(revealTimer);
+
+    const warningTimer = window.setTimeout(() => {
+      const warningPoint = getScreenWorldPoint('F1');
+      void triggerFireworkAt(
+        new THREE.Vector3(warningPoint.x, warningPoint.y + 0.35, 0),
+        'small',
+        'F1',
+        900,
+        allowAudioStart
+      );
+    }, AUTO_FIREWORK_WARNING_MS);
+    autoTimelineTimersRef.current.push(warningTimer);
+
+    const preludeBurstTimer = window.setTimeout(() => {
+      const burstPoint = getScreenWorldPoint('A1');
+      void triggerFireworkAt(
+        new THREE.Vector3(burstPoint.x, burstPoint.y + 0.2, 0),
+        'large',
+        'A1',
+        1800,
+        allowAudioStart
+      );
+      setFireworkPreludeStartedAt(null);
+    }, AUTO_FIREWORK_PRELUDE_MS);
+    autoTimelineTimersRef.current.push(preludeBurstTimer);
 
     const screenIds = SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id);
     const randomBetween = (min: number, max: number) => min + Math.random() * (max - min);
@@ -1665,8 +1851,8 @@ export default function App() {
 
     randomPlan.forEach(({ t, screen, kind, point }) => {
       const timer = window.setTimeout(() => {
-        void triggerFireworkAt(point, kind, screen, kind === 'large' ? 920 : 620, allowAudioStart);
-      }, AUTO_REVEAL_MS + t);
+        void triggerFireworkAt(point, kind, screen, kind === 'large' ? 1450 : 940, allowAudioStart);
+      }, AUTO_FIREWORK_REVEAL_MS + t);
       autoTimelineTimersRef.current.push(timer);
     });
 
@@ -1674,6 +1860,7 @@ export default function App() {
       autoFireworkActiveRef.current = false;
       setInteractionPoint(null);
       setFireworkScratchPoint(null);
+      setFireworkPreludeStartedAt(null);
       setMode('idle');
       setFireworkState('standby');
       intensityRef.current = 0.08;
@@ -1691,9 +1878,9 @@ export default function App() {
         setAutoSceneOpacity(1);
       }, AUTO_END_BLACKOUT_MS);
       autoTimelineTimersRef.current.push(blackoutTimer);
-    }, AUTO_REVEAL_MS + AUTO_FIREWORK_DURATION_MS);
+    }, AUTO_FIREWORK_REVEAL_MS + AUTO_FIREWORK_DURATION_MS);
     autoTimelineTimersRef.current.push(endTimer);
-  }, [clearAutoTimeline, screenId, setFireworkState, setMusicEvolution, setVisualMode, soundEnabled, startAudio, stopAllLayers, stopStandbyWake, syncToFirebase, triggerFireworkAt]);
+  }, [clearAutoTimeline, isOverview, screenId, setFireworkState, setMusicEvolution, setVisualMode, soundEnabled, startAudio, stopAllLayers, stopStandbyWake, syncToFirebase, triggerFireworkAt]);
 
   const startAutoTreeShow = useCallback(async (allowAudioStart = true) => {
     clearAutoTimeline();
@@ -1712,9 +1899,6 @@ export default function App() {
     autoTreeActiveRef.current = false;
     setAutoBlackout(true);
     setAutoSceneOpacity(0);
-    setAutoFishActive(false);
-    setAutoFishProgress(0);
-    autoFishStartedAtRef.current = null;
     gestureProgressRef.current = 0;
     gestureCompletedRef.current = false;
     gestureRoundLockedRef.current = false;
@@ -1734,6 +1918,7 @@ export default function App() {
     setMode('idle');
     setInteractionPoint(null);
     setScreenPulse(null);
+    treeIdleAudioStoppedRef.current = false;
 
     if (soundEnabled && allowAudioStart) {
       await startAudio();
@@ -1748,33 +1933,6 @@ export default function App() {
       setAutoSceneOpacity(1);
     }, 260);
     autoTimelineTimersRef.current.push(revealTimer);
-
-    const fishTimer = window.setTimeout(() => {
-      autoFishStartedAtRef.current = performance.now();
-      setAutoFishProgress(0);
-      setAutoFishActive(true);
-    }, AUTO_REVEAL_MS);
-    autoTimelineTimersRef.current.push(fishTimer);
-
-    const pathPulses = AUTO_FISH_PATH.flatMap((screen, index) => {
-      const travelLeaveProgress = index >= AUTO_FISH_PATH.length - 1 ? 1 : (index + 1) / (AUTO_FISH_PATH.length - 1);
-      const leaveProgress = AUTO_FISH_GATHER_FRACTION + travelLeaveProgress * (1 - AUTO_FISH_GATHER_FRACTION);
-      const at = AUTO_REVEAL_MS + leaveProgress * AUTO_FISH_DURATION_MS + 220;
-      const power = Math.min(1, 0.5 + index * 0.052);
-      return index === 4 || index === 9 || index === AUTO_FISH_PATH.length - 1
-        ? [
-            { at, screen, power },
-            { at: at + 320, screen, power: Math.min(1, power + 0.18) },
-          ]
-        : [{ at, screen, power }];
-    });
-
-    const pulses = pathPulses.sort((a, b) => a.at - b.at);
-
-    pulses.forEach(({ at, screen, power }) => {
-      const timer = window.setTimeout(() => triggerAutoPulse(screen, power), at);
-      autoTimelineTimersRef.current.push(timer);
-    });
 
     const growTimer = window.setTimeout(() => {
       const treeBasePoint = getScreenWorldPoint('F1');
@@ -1803,17 +1961,9 @@ export default function App() {
         mode: 'flow',
         lastInteraction: { x: treeBasePoint.x, y: treeBasePoint.y, z: treeBasePoint.z, timestamp: Date.now() },
       });
-    }, AUTO_REVEAL_MS + AUTO_FISH_DURATION_MS + 2500);
+    }, AUTO_REVEAL_MS + 900);
     autoTimelineTimersRef.current.push(growTimer);
-  }, [clearAutoTimeline, restartTreeMusic, setMusicEvolution, soundEnabled, startAudio, startStandbyWake, syncToFirebase, triggerAutoPulse, updateTreeLayers]);
-
-  const setManualTreeControl = useCallback(() => {
-    clearAutoTimeline();
-    stopStandbyWake();
-    setTreeControlMode('manual');
-    setAutoBlackout(false);
-    setAutoSceneOpacity(1);
-  }, [clearAutoTimeline, stopStandbyWake]);
+  }, [clearAutoTimeline, restartTreeMusic, setMusicEvolution, soundEnabled, startAudio, startStandbyWake, syncToFirebase, updateTreeLayers]);
 
   const setManualFireworkControl = useCallback(() => {
     clearAutoTimeline();
@@ -1842,6 +1992,7 @@ export default function App() {
 
     if (soundEnabled && visualMode === 'tree') {
       await startAudio();
+      treeIdleAudioStoppedRef.current = false;
       updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
     }
 
@@ -1890,12 +2041,6 @@ export default function App() {
       return;
     }
 
-    if (soundEnabled && useSampleLibraryRef.current) {
-      await addRandomSampleLayer();
-    } else if (soundEnabled) {
-      stopAllLayers();
-      await triggerScaleNote();
-    }
     setInteractionPoint(point);
     setMode('interaction');
     setScreenPulse({ source: sourceScreen, timestamp: Date.now() });
@@ -2013,6 +2158,14 @@ export default function App() {
           syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
         }, 260);
       }
+    } else if (command.command === 'setBaofaFishState') {
+      if (value === 'running') {
+        startFishRun(false);
+        syncToFirebase({ baofaFishState: 'running' });
+      } else {
+        stopFishRun(false);
+        syncToFirebase({ baofaFishState: 'idle' });
+      }
     } else if (command.command === 'setScreen' && typeof value === 'string' && isKnownScreenId(value)) {
       const normalizedTarget = normalizeScreenOccupancyId(command.target) || command.target;
       const normalizedClientId = normalizeScreenOccupancyId(showControlClientIdRef.current) || showControlClientIdRef.current;
@@ -2064,6 +2217,8 @@ export default function App() {
     setFireworkState,
     setAutoBlackout,
     setAutoSceneOpacity,
+    setAutoFishActive,
+    setAutoFishProgress,
     setFireworkControlMode,
     setFireworkScratchPoint,
     setIntensity,
@@ -2074,7 +2229,9 @@ export default function App() {
     setTreeControlMode,
     setVisualMode,
     startAutoFireworkShow,
+    startFishRun,
     stopAllLayers,
+    stopFishRun,
     syncToFirebase
   ]);
 
@@ -2096,7 +2253,7 @@ export default function App() {
   useEffect(() => {
     showControlRef.current?.publishState({
       status: 'online',
-      screenTopology: SHOW_SCREEN_LAYOUT_ITEMS.map((screen) => screen.id),
+      screenTopology: SHOW_SCREEN_TOPOLOGY,
       screenRegistry: SHOW_SCREEN_LAYOUT_ITEMS.map((screen, index) => ({
         id: screen.id,
         label: `Screen ${getScreenDisplayId(screen.id)}`,
@@ -2108,7 +2265,9 @@ export default function App() {
       overview: isOverview,
       mode,
       intensity,
+      evolution,
       treeGrowth,
+      treePhase: treePhaseRef.current,
       gestureActive,
       lastInteraction: interactionPoint
         ? { x: interactionPoint.x, y: interactionPoint.y, z: interactionPoint.z, timestamp: Date.now() }
@@ -2118,12 +2277,7 @@ export default function App() {
       firebaseStatus: connectionStatus,
       visualMode,
       fireworkState,
-      useSampleLibrary,
-      screenPresentation: {
-        autoRedirect: screenPresentation.autoRedirect,
-        showMenu: screenPresentation.showMenu,
-        showDebug: screenPresentation.showDebug,
-      },
+      baofaFishState: autoFishActive ? 'running' : 'idle',
     });
   }, [
     connectionStatus,
@@ -2139,16 +2293,17 @@ export default function App() {
     screenRoute,
     treeGrowth,
     fireworkState,
+    autoFishActive,
+    evolution,
     screenPresentation.autoRedirect,
     screenPresentation.showDebug,
     screenPresentation.showMenu,
-    useSampleLibrary,
     visualMode,
   ]);
 
   const handGestureActive = isCameraActive && hasHandDetected && isHandOpen && openHandCount > 0;
-  const shouldShowMenu = screenPresentation.showMenu || isLocalPreview;
-  const debugEnabled = (screenPresentation.showDebug && !hideForcedWebGLDebug) || (shouldShowMenu && showWebGLDebug);
+  const shouldShowMenu = screenPresentation.showMenu;
+  const debugEnabled = screenPresentation.showDebug;
   const autoFishScreenId = isOverview ? 'OVERVIEW' : screenId;
   const focusedScreenId = isOverview ? 'OVERVIEW' : screenId;
   const autoFishStage = autoFishActive ? getFishStagePosition(autoFishProgress) : null;
@@ -2160,32 +2315,45 @@ export default function App() {
       : fireworkState === 'resetting'
         ? 'RESETTING / 重置'
         : 'STANDBY / 待机';
-  const treeAutoActive = visualMode === 'tree' && treeControlMode === 'auto';
+  const fishRevealActive = autoFishActive;
   const isAutoScreenFrameVisible = (id: string) => {
-    if (!treeAutoActive) return true;
+    if (!fishRevealActive) return true;
     const revealProgress = getAutoFishScreenRevealProgress(id);
     return revealProgress === null || autoFishProgress >= revealProgress;
   };
 
-  if (isKnownScreenId(routeScreenId) && screenRoute?.owner === 'vj') {
+  const routedAwayFromBaofa =
+    isKnownScreenId(routeScreenId) &&
+    screenRoute &&
+    screenRoute.owner !== 'baofa';
+
+  if (routedAwayFromBaofa) {
     const targetUrl = screenRoute.url;
+    const routeLabel =
+      screenRoute.owner === 'vj'
+        ? 'VJ / 已路由到 VJ'
+        : screenRoute.owner === 'diagnostic'
+          ? 'Diagnostic / 诊断'
+          : 'Off / 关闭';
 
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] px-8 text-white">
         <div className="flex max-w-md flex-col items-center gap-4 text-center">
           <Route size={34} className="text-cyan-200/70" />
           <div>
-            <div className="text-sm font-mono uppercase tracking-[0.24em] text-white/80">Screen routed to VJ / 已路由到 VJ</div>
+            <div className="text-sm font-mono uppercase tracking-[0.24em] text-white/80">Screen routed to {routeLabel}</div>
             <div className="mt-2 text-xs font-mono uppercase tracking-[0.18em] text-white/45">{routeScreenId}</div>
           </div>
-          <a
-            href={targetUrl}
-            className="inline-flex h-10 items-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-4 text-[10px] font-mono uppercase tracking-widest text-cyan-100 hover:bg-cyan-300 hover:text-black"
-          >
-            <ExternalLink size={14} />
-            Open VJ screen / 打开 VJ 屏
-          </a>
-          {screenPresentation.autoRedirect && targetUrl && (
+          {targetUrl && (
+            <a
+              href={targetUrl}
+              className="inline-flex h-10 items-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-4 text-[10px] font-mono uppercase tracking-widest text-cyan-100 hover:bg-cyan-300 hover:text-black"
+            >
+              <ExternalLink size={14} />
+              Open routed screen / 打开路由屏
+            </a>
+          )}
+          {screenPresentation.autoRedirect && targetUrl && screenRoute.owner === 'vj' && (
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/35">
               Redirecting automatically / 自动跳转中
             </div>
@@ -2239,7 +2407,7 @@ export default function App() {
               pulseTime={screenPulse?.timestamp}
               autoFishStage={autoFishStage}
               autoFishProgress={autoFishProgress}
-              autoFishRevealActive={treeAutoActive}
+              autoFishRevealActive={fishRevealActive}
               isStarted={treeGrowth > 0 || mode === 'interaction'}
               isPaused={false}
             />
@@ -2291,7 +2459,7 @@ export default function App() {
         isOverview={isOverview}
       />
 
-      <div className="absolute inset-0 z-20 flex pointer-events-none">
+      <div className="absolute inset-0 z-[70] flex pointer-events-none">
         <AnimatePresence>
           {showGestureProgress && !treeTriggered && (
             <motion.div
@@ -2317,7 +2485,7 @@ export default function App() {
       </AnimatePresence>
 
         {shouldShowMenu && (
-        <div className="absolute top-6 left-6 pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
+        <div className="absolute top-6 left-6 z-[70] pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={() => isCameraActive ? stopCamera() : startCamera()}
             className={`p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${isCameraActive ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400' : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20 hover:bg-white/10'}`}
@@ -2328,104 +2496,10 @@ export default function App() {
           <button
             onClick={() => setShowScreenPanel((value) => !value)}
             className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${showScreenPanel ? 'border-cyan-300/45 bg-cyan-300/12 text-cyan-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
-            title="Screen routing"
+            title="Debug menu"
             aria-pressed={showScreenPanel}
           >
             <MonitorCog size={18} />
-          </button>
-          <button
-            onClick={() => {
-              if (debugEnabled) {
-                setShowWebGLDebug(false);
-                setHideForcedWebGLDebug(true);
-              } else {
-                setHideForcedWebGLDebug(false);
-                setShowWebGLDebug(true);
-              }
-            }}
-            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${debugEnabled ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'}`}
-            title="WebGL debug"
-          >
-            <Activity size={18} />
-          </button>
-          <button
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              const next = !useSampleLibraryRef.current;
-              useSampleLibraryRef.current = next;
-              setUseSampleLibrary(next);
-              if (!next) {
-                stopAllLayers();
-              }
-            }}
-            className={`ml-3 inline-flex h-[44px] items-center gap-2 rounded-full border px-3 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
-              useSampleLibrary
-                ? 'border-emerald-300/45 bg-emerald-300/12 text-emerald-100'
-                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
-            }`}
-            title={useSampleLibrary ? 'Sample library sound on' : 'Scale note sound on'}
-            aria-pressed={useSampleLibrary}
-          >
-            <Music2 size={15} />
-            {useSampleLibrary ? 'Sample' : 'Scale'}
-          </button>
-          <button
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              audioAutoStartAllowedRef.current = true;
-              if (visualMode === 'firework') {
-                if (fireworkControlMode === 'auto') {
-                  setManualFireworkControl();
-                } else {
-                  void startAutoFireworkShow();
-                }
-                return;
-              }
-
-              if (treeControlMode === 'auto') {
-                setManualTreeControl();
-              } else {
-                void startAutoTreeShow();
-              }
-            }}
-            className={`ml-3 inline-flex h-[44px] items-center rounded-full border px-4 font-mono text-[9px] uppercase tracking-[0.18em] transition-all duration-500 backdrop-blur-md ${
-              activeControlMode === 'auto'
-                ? 'border-cyan-200/60 bg-cyan-200/18 text-cyan-50 shadow-[0_0_22px_rgba(34,211,238,0.28)]'
-                : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20 hover:bg-white/10'
-            }`}
-            title={activeControlMode === 'auto' ? 'Automation on' : 'Automation off'}
-            aria-pressed={activeControlMode === 'auto'}
-          >
-            {activeControlMode === 'auto' ? 'Auto' : 'Manual'}
-          </button>
-          <button
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              setSoundEnabled((value) => {
-                const next = !value;
-                if (!next) {
-                  stopAllLayers();
-                } else if (visualMode === 'tree') {
-                  audioAutoStartAllowedRef.current = true;
-                  void startAudio().then(() => {
-                    updateTreeLayers(treeGrowthRef.current, evolutionRef.current, treeFadingRef.current);
-                  });
-                }
-                return next;
-              });
-            }}
-            className={`ml-3 p-3 rounded-full border transition-all duration-500 backdrop-blur-md ${
-              soundEnabled
-                ? 'border-cyan-300/45 bg-cyan-300/12 text-cyan-100'
-                : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20 hover:bg-white/10'
-            }`}
-            title={soundEnabled ? 'All sound on' : 'All sound off'}
-            aria-pressed={soundEnabled}
-          >
-            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
 
           {isCameraActive && (
@@ -2450,6 +2524,7 @@ export default function App() {
         )}
 
       <AutoFishSchool active={autoFishActive} progress={autoFishProgress} screenId={autoFishScreenId} isOverview={isOverview} />
+      <FireworkPrelude active={visualMode === 'firework' && fireworkControlMode === 'auto'} startedAt={fireworkPreludeStartedAt} screenId={autoFishScreenId} isOverview={isOverview} />
       {activeControlMode === 'auto' && (
         <div
           className="fixed inset-0 z-40 pointer-events-none bg-black"
@@ -2466,12 +2541,12 @@ export default function App() {
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
-              className="absolute top-6 right-6 w-[380px] max-w-[calc(100vw-2rem)] pointer-events-auto rounded border border-white/10 bg-black/55 p-4 backdrop-blur-xl"
+              className="absolute top-6 right-6 z-[70] max-h-[calc(100vh-3rem)] w-[760px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded border border-white/10 bg-black/72 p-4 shadow-2xl backdrop-blur-xl pointer-events-auto"
               onPointerDown={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/70">Screen Routing / 屏幕排序</div>
+                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/70">Debug Menu / 调试菜单</div>
                   <div className="mt-1 text-[10px] font-mono uppercase tracking-[0.16em] text-cyan-300/60">
                     {isOverview ? 'All Screens Preview / 全屏预览' : `Display ${getScreenDisplayId(screenId)} / 显示屏 ${getScreenDisplayId(screenId)}`}
                   </div>
@@ -2488,175 +2563,210 @@ export default function App() {
                 </div>
               </div>
 
-              <div
-                className="relative mt-4 rounded border border-white/10 bg-white/[0.025]"
-                style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
-              >
-                <button
-                  onClick={() => openScreenRoute('A1')}
-                  className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${!isOverview && normalizeScreenOccupancyId(screenId) === 'A1' ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
-                  style={getLayoutStyle(MASTER_SCREEN)}
-                >
-                  {getScreenDisplayId('A1')}
-                </button>
-                {SCREEN_LAYOUT_ITEMS.map((screen) => (
-                  <button
-                    key={screen.id}
-                    onClick={() => openScreenRoute(screen.id)}
-                    className={`absolute rounded-sm border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === screen.id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
-                    style={getLayoutStyle(screen)}
-                  >
-                    {getScreenDisplayId(screen.id)}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-3 rounded border border-white/10 bg-white/[0.025] px-3 py-2 text-[9px] font-mono uppercase tracking-[0.16em] text-white/50">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Native baofa / 原生屏</span>
-                  <span className="text-cyan-200/70">{BAOFA_NATIVE_URL}</span>
+              <div className="mt-4 grid grid-cols-4 gap-2 text-[9px] font-mono uppercase tracking-[0.14em] max-[720px]:grid-cols-2">
+                <div className={`rounded border px-3 py-2 ${showControlStatus === 'connected' ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100/80' : 'border-white/10 bg-white/[0.04] text-white/45'}`}>
+                  4300 {showControlStatus}
                 </div>
-              <div className="mt-1 flex items-center justify-between gap-3">
-                <span>VJ external / 外部 VJ</span>
-                <span className="text-cyan-200/70 break-all">{screenRoutes[screenId]?.url || 'Route URL unavailable'}</span>
-              </div>
+                <div className={`rounded border px-3 py-2 ${debugEnabled ? 'border-amber-300/25 bg-amber-300/10 text-amber-100/80' : 'border-white/10 bg-white/[0.04] text-white/45'}`}>
+                  Debug {debugEnabled ? 'visible' : 'hidden'}
+                </div>
+                <div className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-white/55">
+                  Mode {visualMode}
+                </div>
+                <div className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-white/55">
+                  Fish {autoFishActive ? 'running' : 'idle'}
+                </div>
               </div>
 
-              <div className="mt-4 space-y-3">
-                <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
+              <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(260px,0.9fr)_minmax(320px,1fr)]">
+                <section className="space-y-3 rounded border border-white/10 bg-white/[0.025] p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Mode / 模式</div>
+                      <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Screens / 屏幕</div>
+                      <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-300/55">
+                        Route viewer / 路由查看
+                      </div>
+                    </div>
+                    <Route size={15} className="text-cyan-100/60" />
+                  </div>
+                  <div
+                    className="relative rounded border border-white/10 bg-black/25"
+                    style={{ aspectRatio: `${STAGE_BOUNDS.width} / ${STAGE_BOUNDS.height}` }}
+                  >
+                    <button
+                      onClick={() => openScreenRoute('A1')}
+                      className={`absolute rounded-sm border px-2 text-[9px] font-mono uppercase tracking-widest transition ${!isOverview && normalizeScreenOccupancyId(screenId) === 'A1' ? 'border-emerald-300/45 bg-emerald-300/15 text-emerald-100' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80'}`}
+                      style={getLayoutStyle(MASTER_SCREEN)}
+                    >
+                      {getScreenDisplayId('A1')}
+                    </button>
+                    {SCREEN_LAYOUT_ITEMS.map((screen) => (
+                      <button
+                        key={screen.id}
+                        onClick={() => openScreenRoute(screen.id)}
+                        className={`absolute rounded-sm border text-[10px] font-mono transition ${!isMaster && !isOverview && screenId === screen.id ? 'border-cyan-300 bg-cyan-300/15 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.25)]' : 'border-white/10 bg-white/[0.04] text-white/45 hover:text-white/80 hover:border-white/20'}`}
+                        style={getLayoutStyle(screen)}
+                      >
+                        {getScreenDisplayId(screen.id)}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="space-y-3 rounded border border-white/10 bg-white/[0.025] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Show / 节目</div>
                       <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-300/55">
                         {visualMode === 'firework' ? 'Fireworks / 烟花' : 'Tree / 树'}
                       </div>
                     </div>
-                    <div className="segmented-control" aria-label="Mode switch">
+                    <div className="grid grid-cols-2 overflow-hidden rounded border border-white/10 bg-black/30" aria-label="Mode switch">
                       <button
                         type="button"
-                        className={visualMode === 'tree' ? 'selected' : ''}
+                        className={`h-9 px-3 text-[10px] font-mono uppercase tracking-widest transition ${visualMode === 'tree' ? 'bg-cyan-300/15 text-cyan-100' : 'text-white/45 hover:bg-white/5 hover:text-white/80'}`}
                         onClick={() => setVisualMode('tree')}
                       >
                         Tree
                       </button>
                       <button
                         type="button"
-                        className={visualMode === 'firework' ? 'selected' : ''}
+                        className={`h-9 border-l border-white/10 px-3 text-[10px] font-mono uppercase tracking-widest transition ${visualMode === 'firework' ? 'bg-fuchsia-300/15 text-fuchsia-100' : 'text-white/45 hover:bg-white/5 hover:text-white/80'}`}
                         onClick={() => setVisualMode('firework')}
                       >
                         Fireworks
                       </button>
                     </div>
                   </div>
-                </div>
 
-                {visualMode === 'tree' ? (
-                  <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
+                  <div className="space-y-2 rounded border border-cyan-300/12 bg-cyan-300/[0.035] p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Tree / 树控制</div>
-                        <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-300/55">{currentTreeLabel}</div>
-                      </div>
-                      <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-100/80">
-                        {currentTreeLabel}
+                      <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-white/55">Fish module / 鱼群模块</span>
+                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] ${autoFishActive ? 'border-cyan-300/50 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/5 text-white/55'}`}>
+                        {autoFishActive ? 'Running / 运行' : 'Idle / 待机'}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      {effectModes.map((effect) => (
-                        <button
-                          key={effect.mode}
-                          onClick={() => applyEffectMode(effect.mode, effect.intensity)}
-                          className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
-                            mode === effect.mode
-                              ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
-                              : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
-                          }`}
-                        >
-                          {effect.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          resetTreeGrowth();
-                        }}
+                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${!autoFishActive ? 'border-cyan-300/50 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'}`}
+                        onClick={() => stopFishRun()}
                       >
-                        Reset tree / 重置树
+                        Fish Idle / 鱼群待机
+                      </button>
+                      <button
+                        type="button"
+                        className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${autoFishActive ? 'border-cyan-300/50 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'}`}
+                        onClick={() => startFishRun()}
+                      >
+                        Fish Run / 鱼群启动
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-2 rounded border border-white/10 bg-white/[0.025] px-3 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/55">Fireworks / 烟花控制</div>
-                        <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.16em] text-fuchsia-300/55">{fireworkStateLabel}</div>
+
+                  {visualMode === 'tree' ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3 rounded border border-cyan-300/12 bg-cyan-300/[0.04] px-3 py-2">
+                        <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-white/55">Tree state / 树状态</span>
+                        <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] text-cyan-100/80">
+                          {currentTreeLabel}
+                        </span>
                       </div>
-                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] ${
-                        fireworkState === 'launching'
-                          ? 'border-fuchsia-200/60 bg-fuchsia-300/12 text-fuchsia-50'
-                          : fireworkState === 'resetting'
-                            ? 'border-amber-200/60 bg-amber-300/12 text-amber-50'
-                            : 'border-white/10 bg-white/5 text-white/55'
-                      }`}>
-                        {fireworkStateLabel}
-                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {effectModes.map((effect) => (
+                          <button
+                            key={effect.mode}
+                            onClick={() => applyEffectMode(effect.mode, effect.intensity)}
+                            className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${
+                              mode === effect.mode
+                                ? 'border-cyan-300/55 bg-cyan-300/15 text-cyan-100'
+                                : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'
+                            }`}
+                          >
+                            {effect.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        <button
+                          type="button"
+                          className="h-10 rounded border border-white/10 bg-white/5 px-3 text-[10px] font-mono uppercase tracking-widest text-white/55 transition hover:border-white/20 hover:text-white/85"
+                          onClick={() => {
+                            resetTreeGrowth();
+                          }}
+                        >
+                          Reset tree / 重置树
+                        </button>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        className={fireworkState === 'standby' ? 'selected' : ''}
-                        onClick={() => {
-                          clearAutoTimeline();
-                          setManualFireworkControl();
-                          setMode('idle');
-                          setIntensity(0.08);
-                          setMusicEvolution(0);
-                          setInteractionPoint(null);
-                          setFireworkScratchPoint(null);
-                          stopAllLayers();
-                          setFireworkState('standby');
-                        }}
-                      >
-                        Standby / 待机
-                      </button>
-                      <button
-                        type="button"
-                        className={fireworkState === 'launching' ? 'selected' : ''}
-                        onClick={() => void startAutoFireworkShow()}
-                      >
-                        Launch / 燃放
-                      </button>
-                      <button
-                        type="button"
-                        className={fireworkState === 'resetting' ? 'selected' : ''}
-                        onClick={() => {
-                          clearAutoTimeline();
-                          setFireworkState('resetting');
-                          setFireworkControlMode('manual');
-                          setAutoBlackout(false);
-                          setAutoSceneOpacity(1);
-                          autoFireworkActiveRef.current = false;
-                          setMode('idle');
-                          setIntensity(0.08);
-                          setMusicEvolution(0);
-                          setInteractionPoint(null);
-                          setFireworkScratchPoint(null);
-                          stopAllLayers();
-                          syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'resetting' });
-                          window.setTimeout(() => {
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3 rounded border border-fuchsia-300/12 bg-fuchsia-300/[0.04] px-3 py-2">
+                        <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-white/55">Firework state / 烟花状态</span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[9px] font-mono uppercase tracking-[0.16em] ${
+                          fireworkState === 'launching'
+                            ? 'border-fuchsia-200/60 bg-fuchsia-300/12 text-fuchsia-50'
+                            : fireworkState === 'resetting'
+                              ? 'border-amber-200/60 bg-amber-300/12 text-amber-50'
+                              : 'border-white/10 bg-white/5 text-white/55'
+                        }`}>
+                          {fireworkStateLabel}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 max-[720px]:grid-cols-1">
+                        <button
+                          type="button"
+                          className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${fireworkState === 'standby' ? 'border-fuchsia-300/50 bg-fuchsia-300/15 text-fuchsia-100' : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'}`}
+                          onClick={() => {
+                            clearAutoTimeline();
+                            setManualFireworkControl();
+                            setMode('idle');
+                            setIntensity(0.08);
+                            setMusicEvolution(0);
+                            setInteractionPoint(null);
+                            setFireworkScratchPoint(null);
+                            stopAllLayers();
                             setFireworkState('standby');
-                            syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
-                          }, 260);
-                        }}
-                      >
-                        Reset / 重置
-                      </button>
+                          }}
+                        >
+                          Standby / 待机
+                        </button>
+                        <button
+                          type="button"
+                          className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${fireworkState === 'launching' ? 'border-fuchsia-300/50 bg-fuchsia-300/15 text-fuchsia-100' : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'}`}
+                          onClick={() => void startAutoFireworkShow()}
+                        >
+                          Launch / 燃放
+                        </button>
+                        <button
+                          type="button"
+                          className={`h-10 rounded border px-3 text-[10px] font-mono uppercase tracking-widest transition ${fireworkState === 'resetting' ? 'border-amber-300/50 bg-amber-300/15 text-amber-100' : 'border-white/10 bg-white/5 text-white/45 hover:border-white/20 hover:text-white/80'}`}
+                          onClick={() => {
+                            clearAutoTimeline();
+                            setFireworkState('resetting');
+                            setFireworkControlMode('manual');
+                            setAutoBlackout(false);
+                            setAutoSceneOpacity(1);
+                            autoFireworkActiveRef.current = false;
+                            setMode('idle');
+                            setIntensity(0.08);
+                            setMusicEvolution(0);
+                            setInteractionPoint(null);
+                            setFireworkScratchPoint(null);
+                            stopAllLayers();
+                            syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'resetting' });
+                            window.setTimeout(() => {
+                              setFireworkState('standby');
+                              syncToFirebase({ visualMode: 'firework', mode: 'idle', intensity: 0.08, evolution: 0, fireworkState: 'standby' });
+                            }, 260);
+                          }}
+                        >
+                          Reset / 重置
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </section>
               </div>
 
               <div className="mt-3 h-1 rounded-full bg-white/10 overflow-hidden">
@@ -2673,78 +2783,56 @@ export default function App() {
         </div>
       )}
 
+      {shouldShowMenu && <ShowRuntimeSettingsPanel status={showControlStatus} />}
+
       <AnimatePresence>
         {debugEnabled && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
-            className="fixed bottom-6 left-6 z-50 w-[280px] max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/65 p-4 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 backdrop-blur-xl"
+            className={`fixed ${shouldShowMenu ? 'bottom-20' : 'bottom-6'} left-6 z-[70] ${webglDebugOpen ? 'w-[280px]' : 'w-auto'} max-w-[calc(100vw-3rem)] pointer-events-auto rounded border border-amber-300/20 bg-black/65 font-mono text-[10px] uppercase tracking-[0.18em] text-white/65 backdrop-blur-xl`}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-amber-100/90">
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between gap-3 text-left text-amber-100/90 ${webglDebugOpen ? 'p-4 pb-3' : 'px-4 py-2.5'}`}
+              onClick={() => setWebglDebugOpen((value) => !value)}
+              aria-expanded={webglDebugOpen}
+            >
+              <span className="flex items-center gap-2">
                 <Activity size={14} />
-                <span>WebGL Debug / 调试</span>
-              </div>
-              {screenPresentation.showDebug && !hideForcedWebGLDebug && (
-                <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
-                  4300
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  setShowWebGLDebug(false);
-                  setHideForcedWebGLDebug(true);
-                }}
-                className="rounded border border-white/10 px-2 py-1 text-[9px] text-white/45 hover:border-white/20 hover:text-white/80"
-              >
-                Off
-              </button>
-            </div>
+                <span>{webglDebugOpen ? 'WebGL Debug / 调试' : 'Debug visible / 调试可见'}</span>
+              </span>
+              <span className="rounded border border-amber-300/20 px-2 py-1 text-[9px] text-amber-100/65">
+                {webglDebugOpen ? 'Close' : 'Open'}
+              </span>
+            </button>
 
-            {webglStats ? (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                <span>FPS</span><span className="text-right text-cyan-100">{webglStats.fps}</span>
-                <span>Frame</span><span className="text-right text-cyan-100">{webglStats.frameMs}ms</span>
-                <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
-                <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
-                <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
-                <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
-                <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
-                <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
-                <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
-                <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
+            {webglDebugOpen && (
+              <div className="px-4 pb-4">
+                {webglStats ? (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <span>FPS</span><span className="text-right text-cyan-100">{webglStats.fps}</span>
+                    <span>Frame</span><span className="text-right text-cyan-100">{webglStats.frameMs}ms</span>
+                    <span>Calls</span><span className="text-right text-cyan-100">{webglStats.calls}</span>
+                    <span>Triangles</span><span className="text-right text-cyan-100">{webglStats.triangles.toLocaleString()}</span>
+                    <span>Points</span><span className="text-right text-cyan-100">{webglStats.points.toLocaleString()}</span>
+                    <span>Lines</span><span className="text-right text-cyan-100">{webglStats.lines.toLocaleString()}</span>
+                    <span>Geometry</span><span className="text-right text-cyan-100">{webglStats.geometries}</span>
+                    <span>Textures</span><span className="text-right text-cyan-100">{webglStats.textures}</span>
+                    <span>DPR</span><span className="text-right text-cyan-100">{webglStats.pixelRatio}</span>
+                    <span>Viewport</span><span className="text-right text-cyan-100">{webglStats.viewport}</span>
+                  </div>
+                ) : (
+                  <div className="text-white/35">Collecting render stats / 正在采样</div>
+                )}
               </div>
-            ) : (
-              <div className="text-white/35">Collecting render stats / 正在采样</div>
             )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {(shouldShowMenu || screenPresentation.showDebug) && (
-      <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none z-50">
-        <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
-          showControlStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-gray-900/50 border-white/5 text-white/30'
-        }`}>
-          Show API / 总控: {showControlStatus}
-        </div>
-        <div className={`px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all duration-500 border ${
-          isCameraActive ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-gray-900/50 border-white/5 text-white/20'
-        }`}>
-          {isCameraActive ? (
-            <span className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${hasHandDetected ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : 'bg-gray-600'}`} />
-              Motion / 手势: {hasHandDetected ? (openHandCount > 0 ? `Open x${openHandCount} / 展开 ${openHandCount}` : 'Paused / 暂停') : 'Scanning / 扫描中'}
-            </span>
-          ) : (
-            `${isOverview ? 'Overview / 总览' : `${getScreenDisplayId(screenId)} / 显示屏`} / Camera Offline / 摄像头离线`
-          )}
-        </div>
-      </div>
-      )}
-      <ShowRuntimeSettingsPanel status={showControlStatus} />
     </div>
   );
 }

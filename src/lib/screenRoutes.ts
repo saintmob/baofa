@@ -68,8 +68,8 @@ function normalizeScreenState(state: any, clients: Record<string, ClientPresence
     routes: state?.modules?.interaction?.screenRoutes || {},
     presentation: {
       autoRedirect: typeof presentation.autoRedirect === 'boolean' ? presentation.autoRedirect : true,
-      showDebug: typeof presentation.showDebug === 'boolean' ? presentation.showDebug : false,
-      showMenu: typeof presentation.showMenu === 'boolean' ? presentation.showMenu : false,
+      showDebug: typeof presentation.showDebug === 'boolean' ? presentation.showDebug : true,
+      showMenu: typeof presentation.showMenu === 'boolean' ? presentation.showMenu : true,
     },
     clients,
   };

@@ -81,6 +81,19 @@ function aiStudioNoAutoreloadGuard(): Plugin {
   };
 }
 
+function removeViteClientWhenHmrDisabled(): Plugin {
+  return {
+    name: 'remove-vite-client-when-hmr-disabled',
+    apply: 'serve',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        return html.replace(/\s*<script type="module" src="\/@vite\/client"><\/script>\n?/, '\n');
+      },
+    },
+  };
+}
+
 function isTrue(value: unknown): boolean {
   return value === 'true' || value === '1';
 }
@@ -96,8 +109,13 @@ export default defineConfig(({ mode }) => {
     env.GEMINI_API_KEY || process.env.GEMINI_API_KEY,
   );
 
+  const hmrExplicitlyEnabled =
+    isFalse(env.DISABLE_HMR) || isFalse(process.env.DISABLE_HMR);
+
   const disableHmrRequested =
-    isTrue(env.DISABLE_HMR) || isTrue(process.env.DISABLE_HMR);
+    !hmrExplicitlyEnabled ||
+    isTrue(env.DISABLE_HMR) ||
+    isTrue(process.env.DISABLE_HMR);
 
   const explicitNoAutoreloadEnabled =
     isTrue(env.AI_STUDIO_NO_AUTORELOAD) ||
@@ -118,6 +136,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       ...(enableAiStudioNoAutoreloadGuard ? [aiStudioNoAutoreloadGuard()] : []),
+      ...(disableHmr ? [removeViteClientWhenHmrDisabled()] : []),
       react(),
       tailwindcss(),
     ],
@@ -136,13 +155,15 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: APP_PORT,
       strictPort: true,
-      hmr: {
-        host: '0.0.0.0',
-        port: APP_PORT,
-        clientPort: APP_PORT,
-        protocol: 'ws',
-        overlay: false,
-      },
+      hmr: disableHmr
+        ? false
+        : {
+            host: '0.0.0.0',
+            port: APP_PORT,
+            clientPort: APP_PORT,
+            protocol: 'ws',
+            overlay: false,
+          },
       ws: false,
       watch: {
         ignored: [

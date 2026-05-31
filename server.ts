@@ -10,6 +10,7 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const disableHmr = !["false", "0"].includes(String(process.env.DISABLE_HMR || "").toLowerCase());
 
 async function startServer() {
   const app = express();
@@ -30,14 +31,16 @@ async function startServer() {
         host: "0.0.0.0",
         port: APP_PORT,
         strictPort: true,
-        hmr: {
-          server,
-          host: "0.0.0.0",
-          port: APP_PORT,
-          clientPort: APP_PORT,
-          protocol: "ws",
-          overlay: false,
-        },
+        hmr: disableHmr
+          ? false
+          : {
+              server,
+              host: "0.0.0.0",
+              port: APP_PORT,
+              clientPort: APP_PORT,
+              protocol: "ws",
+              overlay: false,
+            },
         ws: false,
         watch: {
           ignored: [
